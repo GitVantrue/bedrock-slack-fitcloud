@@ -318,6 +318,9 @@ def lambda_handler(event, context):
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepared_data, timeout=30)
             
             raw_data = response.json()
+            print("--- Raw API Response Start ---")
+            print(json.dumps(raw_data, indent=2, ensure_ascii=False))
+            print("--- Raw API Response End ---")
             processed_data_wrapper = process_fitcloud_response(raw_data)
             actual_items_data = processed_data_wrapper.get("data", [])
             
@@ -391,6 +394,9 @@ def lambda_handler(event, context):
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepared_data, timeout=30)
             
             raw_data = response.json()
+            print("--- Raw API Response Start ---")
+            print(json.dumps(raw_data, indent=2, ensure_ascii=False))
+            print("--- Raw API Response End ---")
             processed_data_wrapper = process_fitcloud_response(raw_data)
             actual_items_data = processed_data_wrapper.get("data", [])
             
@@ -470,6 +476,9 @@ def lambda_handler(event, context):
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepared_data, timeout=60) 
             
             raw_data = response.json()
+            print("--- Raw API Response Start ---")
+            print(json.dumps(raw_data, indent=2, ensure_ascii=False))
+            print("--- Raw API Response End ---")
             processed_data_wrapper = process_fitcloud_response(raw_data)
             actual_items_data = processed_data_wrapper.get("data", [])
             
@@ -558,6 +567,9 @@ def lambda_handler(event, context):
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepared_data, timeout=60) 
             
             raw_data = response.json()
+            print("--- Raw API Response Start ---")
+            print(json.dumps(raw_data, indent=2, ensure_ascii=False))
+            print("--- Raw API Response End ---")
             processed_data_wrapper = process_fitcloud_response(raw_data)
             actual_items_data = processed_data_wrapper.get("data", [])
             
@@ -645,6 +657,9 @@ def lambda_handler(event, context):
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepared_data, timeout=60) 
             
             raw_data = response.json()
+            print("--- Raw API Response Start ---")
+            print(json.dumps(raw_data, indent=2, ensure_ascii=False))
+            print("--- Raw API Response End ---")
             processed_data_wrapper = process_fitcloud_response(raw_data)
             actual_items_data = processed_data_wrapper.get("data", [])
             
