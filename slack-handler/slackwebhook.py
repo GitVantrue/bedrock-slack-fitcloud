@@ -179,7 +179,7 @@ def lambda_handler(event, context):
             text_for_agent = original_text.strip()
 
         if not text_for_agent:
-            response_message = f"안녕하세요, <@{user_id}>님! CI/CD 테스트 중입니다. 무엇을 도와드릴까요?"
+            response_message = f"안녕하세요, <@{user_id}>님! 무엇을 도와드릴까요?"
             send_slack_message(channel_id, response_message)
             return {'statusCode': 200, 'body': 'OK'}
 
