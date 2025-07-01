@@ -261,6 +261,24 @@ def process_fitcloud_response(response_data, api_path):
     
     raise ValueError("Invalid response format from FitCloud API")
 
+def format_account_list(accounts):
+    """
+    계정 목록을 예시2번(블록 형태)로 포맷팅하여 반환합니다.
+    accounts: [
+        {"accountName": "STARPASS", "accountId": "173511386181", "status": "ACTIVE"},
+        ...
+    ]
+    """
+    if not accounts:
+        return "등록된 AWS 계정이 없습니다."
+    lines = ["현재 FitCloud에 등록된 AWS 계정 목록입니다:\n"]
+    for acc in accounts:
+        lines.append(f"- **{acc.get('accountName', 'N/A')}**")
+        lines.append(f"  - 계정 ID: {acc.get('accountId', 'N/A')}")
+        lines.append(f"  - 상태: {'활성' if acc.get('status', '').upper() == 'ACTIVE' else '비활성'}\n")
+    lines.append("특정 계정의 비용 정보나 사용량을 확인하고 싶으시면 언제든 말씀해 주세요!")
+    return "\n".join(lines)
+
 def create_bedrock_response(event, status_code=200, response_data=None, error_message=None):
     """Bedrock Agent에 맞는 응답 형식을 생성합니다."""
     action_group = event.get('actionGroup', 'unknown')
@@ -293,6 +311,8 @@ def create_bedrock_response(event, status_code=200, response_data=None, error_me
             final_data["accounts"] = clean_accounts
             final_data["total_count"] = len(clean_accounts)
             final_data["active_count"] = len([acc for acc in clean_accounts if acc.get('status') == 'ACTIVE'])
+            # 자연어 message 추가 (예시2번 스타일)
+            final_data["message"] = format_account_list(clean_accounts)
 
         elif "cost_items" in response_data:
             cost_items = []
