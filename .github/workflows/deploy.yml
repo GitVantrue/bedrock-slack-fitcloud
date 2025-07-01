@@ -1,0 +1,70 @@
+name: Bedrock Slack Integration 자동 배포
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: AWS 자격증명 설정
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ap-northeast-2
+    
+    - name: 변경된 Lambda 함수만 배포
+      run: |
+        # 변경된 파일 확인
+        CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "all")
+        echo "변경된 파일들: $CHANGED_FILES"
+        
+        # Slack Handler 배포
+        if echo "$CHANGED_FILES" | grep -q "slack-handler/" || [ "$CHANGED_FILES" = "all" ]; then
+          if [ -d "slack-handler" ]; then
+            echo "slack-handler 폴더 변경 감지 - 배포 시작"
+            cd slack-handler
+            zip -r ../slack-handler.zip . -x "*.pyc" "__pycache__/*"
+            cd ..
+            aws lambda update-function-code \
+              --function-name FitCloudDMBotHandler \
+              --zip-file fileb://slack-handler.zip
+            echo "✅ FitCloudDMBotHandler 배포 완료!"
+          fi
+        fi
+        
+        # Agent1 Actions 배포
+        if echo "$CHANGED_FILES" | grep -q "agent1-actions/" || [ "$CHANGED_FILES" = "all" ]; then
+          if [ -d "agent1-actions" ]; then
+            echo "agent1-actions 폴더 변경 감지 - 배포 시작"
+            cd agent1-actions
+            zip -r ../agent1-actions.zip . -x "*.pyc" "__pycache__/*"
+            cd ..
+            aws lambda update-function-code \
+              --function-name fitcloud_action_part1-wpfe6 \
+              --zip-file fileb://agent1-actions.zip
+            echo "✅ fitcloud_action_part1-wpfe6 배포 완료!"
+          fi
+        fi
+        
+        # Agent2 Actions 배포
+        if echo "$CHANGED_FILES" | grep -q "agent2-actions/" || [ "$CHANGED_FILES" = "all" ]; then
+          if [ -d "agent2-actions" ]; then
+            echo "agent2-actions 폴더 변경 감지 - 배포 시작"
+            cd agent2-actions
+            zip -r ../agent2-actions.zip . -x "*.pyc" "__pycache__/*"
+            cd ..
+            aws lambda update-function-code \
+              --function-name action_group_quick_start_fcg5f-plzem \
+              --zip-file fileb://agent2-actions.zip
+            echo "✅ action_group_quick_start_fcg5f-plzem 배포 완료!"
+          fi
+        fi
+    
+    - name: 배포 완료
+      run: echo "🎉 모든 Lambda 함수 배포 완료!"
