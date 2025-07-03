@@ -312,6 +312,16 @@ def create_bedrock_response(event, status_code=200, response_data=None, error_me
     api_path_from_event = event.get('apiPath', '') 
     http_method = event.get('httpMethod', 'POST')
     
+    # 현재 날짜 정보를 sessionAttributes에 포함
+    current_date_info = get_current_date_info()
+    session_attributes = {
+        'current_year': str(current_date_info['current_year']),
+        'current_month': str(current_date_info['current_month']),
+        'current_day': str(current_date_info['current_day']),
+        'current_date': current_date_info['current_date_str'],
+        'current_month_str': current_date_info['current_month_str']
+    }
+    
     final_data = {}
 
     if error_message:
@@ -395,7 +405,8 @@ def create_bedrock_response(event, status_code=200, response_data=None, error_me
                     "body": json.dumps(final_data, ensure_ascii=False)
                 }
             }
-        }
+        },
+        "sessionAttributes": session_attributes
     }
 
 def determine_api_path(params):
@@ -530,13 +541,17 @@ def lambda_handler(event, context):
         print(f"📝 최종 확인 파라미터: {params}")
         # ✨ 날짜 보정 로직 적용 끝 ✨
 
-        # API 경로 결정 (특히 /costs/ondemand/... 경로에 대해)
+        # API 경로 결정 (모든 FitCloud API 경로 지원)
         target_api_path = None
         if api_path_from_event == '/accounts':
             target_api_path = '/accounts'
         elif api_path_from_event.startswith('/costs/ondemand/'):
             target_api_path = determine_api_path(params)
             print(f"DEBUG: 비용 API 경로 동적 결정: {api_path_from_event} -> {target_api_path}")
+        elif api_path_from_event.startswith('/invoice/') or api_path_from_event.startswith('/usage/'):
+            # 청구서 및 사용량 API는 람다2에서 처리하므로 그대로 전달
+            target_api_path = api_path_from_event
+            print(f"DEBUG: 청구서/사용량 API 경로: {api_path_from_event}")
         else:
             return create_bedrock_response(event, 404, error_message=f"지원하지 않는 엔드포인트: {api_path_from_event}")
 
@@ -594,6 +609,14 @@ def lambda_handler(event, context):
         elif target_api_path == '/costs/ondemand/account/daily':
             print("  - 작업: 계정 일별 온디맨드 비용 조회")
             api_data = check_and_prepare_data(['from', 'to', 'accountId'])
+            response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, data=api_data, timeout=30)
+            
+        elif target_api_path.startswith('/invoice/') or target_api_path.startswith('/usage/'):
+            print(f"  - 작업: 청구서/사용량 API 호출 ({target_api_path})")
+            # 청구서 및 사용량 API는 람다2에서 처리하므로 파라미터만 전달
+            api_data = check_and_prepare_data(['billingPeriod'] if 'billingPeriod' in params else ['from', 'to'])
+            if 'accountId' in params:
+                api_data['accountId'] = params['accountId']
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, data=api_data, timeout=30)
             
         else:
