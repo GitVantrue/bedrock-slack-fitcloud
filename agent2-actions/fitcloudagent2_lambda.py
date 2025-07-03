@@ -263,6 +263,13 @@ def extract_parameters(event):
     
     return params
 
+# 안전한 float 변환 함수 추가
+def safe_float(val):
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return 0.0
+
 def lambda_handler(event, context):
     print(f"--- API 호출 시작 (Bedrock Agent Event) ---")
     # 이벤트 로깅 시에도 custom_json_serializer 적용
@@ -393,13 +400,13 @@ def lambda_handler(event, context):
                         "lineItemType": item.get("lineItemType"),
                         "invoiceItem": item.get("invoiceItem"),
                         "currencyCode": item.get("currencyCode"),
-                        "usageFee": float(item.get("usageFee", 0.0)),
-                        "usageFeeKrw": float(item.get("usageFeeKrw", 0.0)),
+                        "usageFee": safe_float(item.get("usageFee", 0.0)),
+                        "usageFeeKrw": safe_float(item.get("usageFeeKrw", 0.0)),
                         "exchangeRate": item.get("exchangeRate"), # String 타입
                         "note": item.get("note"),
                     }
                     invoice_items.append(processed_item)
-                    total_usage_fee_krw += float(item.get("usageFeeKrw", 0.0))
+                    total_usage_fee_krw += safe_float(item.get("usageFeeKrw", 0.0))
                 except (ValueError, TypeError) as e:
                     print(f"경고: 청구서 항목 데이터 처리 오류 (항목 스킵): {item} - {e}")
                     continue
@@ -475,13 +482,13 @@ def lambda_handler(event, context):
                         "lineItemType": item.get("lineItemType"),
                         "invoiceItem": item.get("invoiceItem"),
                         "currencyCode": item.get("currencyCode"),
-                        "usageFee": float(item.get("usageFee", 0.0)),
-                        "usageFeeKrw": float(item.get("usageFeeKrw", 0.0)),
+                        "usageFee": safe_float(item.get("usageFee", 0.0)),
+                        "usageFeeKrw": safe_float(item.get("usageFeeKrw", 0.0)),
                         "exchangeRate": item.get("exchangeRate"), # String 타입
                         "note": item.get("note"),
                     }
                     invoice_items.append(processed_item)
-                    total_usage_fee_krw += float(item.get("usageFeeKrw", 0.0))
+                    total_usage_fee_krw += safe_float(item.get("usageFeeKrw", 0.0))
                 except (ValueError, TypeError) as e:
                     print(f"경고: 청구서 항목 데이터 처리 오류 (항목 스킵): {item} - {e}")
                     continue
@@ -566,18 +573,18 @@ def lambda_handler(event, context):
                     processed_item = {
                         "accountId": item.get("accountId"),
                         "usageType": item.get("usageType"),
-                        "usageAmount": float(item.get("usageAmount", 0.0)),
+                        "usageAmount": safe_float(item.get("usageAmount", 0.0)),
                         "productCode": item.get("productCode"),
                         "region": item.get("region"),
                         "serviceCode": item.get("serviceCode"),
                         "tagsJson": parsed_tags_json,
                         "billingPeriod": item.get("billingPeriod"),
-                        "onDemandCost": float(item.get("onDemandCost", 0.0)),
+                        "onDemandCost": safe_float(item.get("onDemandCost", 0.0)),
                         "billingEntity": item.get("billingEntity"),
                         "serviceName": item.get("serviceName"),
                     }
                     usage_items.append(processed_item)
-                    total_on_demand_cost += float(item.get("onDemandCost", 0.0))
+                    total_on_demand_cost += safe_float(item.get("onDemandCost", 0.0))
                 except (ValueError, TypeError) as e:
                     print(f"경고: 온디맨드 사용량 항목 데이터 처리 오류 (항목 스킵): {item} - {e}")
                     continue
@@ -660,18 +667,18 @@ def lambda_handler(event, context):
                     processed_item = {
                         "accountId": item.get("accountId"),
                         "usageType": item.get("usageType"),
-                        "usageAmount": float(item.get("usageAmount", 0.0)),
+                        "usageAmount": safe_float(item.get("usageAmount", 0.0)),
                         "productCode": item.get("productCode"),
                         "region": item.get("region"),
                         "serviceCode": item.get("serviceCode"),
                         "tagsJson": parsed_tags_json,
                         "billingPeriod": item.get("billingPeriod"), # YYYYMMDD 형식 예상
-                        "onDemandCost": float(item.get("onDemandCost", 0.0)),
+                        "onDemandCost": safe_float(item.get("onDemandCost", 0.0)),
                         "billingEntity": item.get("billingEntity"),
                         "serviceName": item.get("serviceName"),
                     }
                     usage_items.append(processed_item)
-                    total_on_demand_cost += float(item.get("onDemandCost", 0.0))
+                    total_on_demand_cost += safe_float(item.get("onDemandCost", 0.0))
                 except (ValueError, TypeError) as e:
                     print(f"경고: 온디맨드 사용량 항목 데이터 처리 오류 (항목 스킵): {item} - {e}")
                     continue
@@ -752,8 +759,8 @@ def lambda_handler(event, context):
                         parsed_tags_json = item['tagsJson']
 
                     # usageAmount와 onDemandCost를 float으로 변환 시도 (String으로 올 경우 대비)
-                    usage_amount = float(item.get("usageAmount", 0.0)) if item.get("usageAmount") else 0.0
-                    on_demand_cost = float(item.get("onDemandCost", 0.0)) if item.get("onDemandCost") else 0.0
+                    usage_amount = safe_float(item.get("usageAmount", 0.0))
+                    on_demand_cost = safe_float(item.get("onDemandCost", 0.0))
 
                     processed_item = {
                         "serviceCode": item.get("serviceCode"),
