@@ -100,66 +100,53 @@ def smart_date_correction(params):
     for param_name in ['from', 'to']:
         original_value = str(corrected_params.get(param_name, '')) # params.get()으로 안전하게 접근
         
-        # 값이 비어있으면 건너김 (위에서 기본값 설정 후에도 여전히 비어있다면)
+        # 값이 비어있으면 건너뜀 (위에서 기본값 설정 후에도 여전히 비어있다면)
         if not original_value.strip():
-            print(f"➡️ {param_name} 값이 비어있어 보정을 건너뜜.")
+            print(f"➡️ {param_name} 값이 비어있어 보정을 건너뜀.")
             continue
 
-        # 1. 길이가 너무 짧은 경우 (월/일만 있는 경우) -> 현재 연도 추가 시도
-        # 예: "0603" -> "20250603" 또는 "06" -> "202506"
-        if len(original_value) == 4: # MMDD 형태 (예: '0603')
+        # 월만 입력된 경우(예: '5', '05', '6', '06')
+        if len(original_value) == 1 or (len(original_value) == 2 and original_value.isdigit()):
+            # 1~12월로 인식
+            month_str = original_value.zfill(2)
+            yyyymm = f"{current_year}{month_str}"
+            corrected_params[param_name] = yyyymm
+            print(f"🔄 {param_name} 보정됨 (월만 입력 → YYYYMM): {original_value} → {yyyymm}")
+            continue
+
+        # MMDD 형태 (예: '0603')
+        if len(original_value) == 4 and original_value.isdigit():
             test_date_str = str(current_year) + original_value
             try:
                 datetime.strptime(test_date_str, '%Y%m%d') # 유효한 날짜인지 확인
                 corrected_params[param_name] = test_date_str
                 print(f"🔄 {param_name} 보정됨 (MMDD -> YYYYMMDD): {original_value} → {test_date_str}")
-                continue # 다음 파라미터로 넘어감
+                continue
             except ValueError:
                 print(f"❌ {param_name} '{original_value}'는 유효한 MMDD 형식이 아니거나 연도 추가 후 유효하지 않음.")
-                # 유효하지 않으면 원래 값 유지 (또는 에러 처리)
-                # 현재는 오류 발생 시 이 파라미터에 대한 보정만 실패하고 다음 로직으로 넘어감
                 pass
 
-        elif len(original_value) == 2: # MM 형태 (예: '06')
-            test_month_str = original_value
-            test_date_str = str(current_year) + test_month_str
-            try:
-                # 월별 조회는 월의 시작일로 유효성 검사
-                datetime.strptime(test_date_str + '01', '%Y%m%d') 
-                corrected_params[param_name] = test_date_str
-                print(f"🔄 {param_name} 보정됨 (MM -> YYYYMM): {original_value} → {test_date_str}")
-                continue # 다음 파라미터로 넘어감
-            except ValueError:
-                print(f"❌ {param_name} '{original_value}'는 유효한 MM 형식이 아니거나 연도 추가 후 유효하지 않음.")
-                pass
-        
-        # 2. YYYYMMDD 또는 YYYYMM 형식에서 연도 보정
-        # 이미 연도가 포함된 경우, Agent가 과거 연도를 잘못 추론한 경우를 보정
+        # YYYYMMDD 또는 YYYYMM 형식에서 연도 보정
         if len(original_value) == 8 or len(original_value) == 6:
             year_part = original_value[:4]
-            suffix_part = original_value[4:] # 월일 또는 월 부분
-            
+            suffix_part = original_value[4:]
             try:
                 # 입력된 연도가 현재 연도보다 이전이고, 너무 과거가 아니라면 현재 연도로 보정 시도
-                # (예: 2020년 이전의 날짜는 일반적으로 보정 대상이 아님. 임계점은 조정 가능)
-                if int(year_part) < current_year and int(year_part) >= 2020: 
+                if int(year_part) < current_year and int(year_part) >= 2020:
                     corrected_value = str(current_year) + suffix_part
                     # 보정된 날짜가 유효한지 최종 확인
                     if len(corrected_value) == 8:
                         datetime.strptime(corrected_value, '%Y%m%d')
                     elif len(corrected_value) == 6:
-                        datetime.strptime(corrected_value + '01', '%Y%m%d') # 월별 유효성 검사
-                    
+                        datetime.strptime(corrected_value + '01', '%Y%m%d')
                     corrected_params[param_name] = corrected_value
-                    print(f"🔄 {param_name} 보정됨 (이전 연도 -> 현재 연도): {original_value} → {corrected_value}") 
+                    print(f"🔄 {param_name} 보정됨 (이전 연도 -> 현재 연도): {original_value} → {corrected_value}")
                 else:
                     print(f"➡️ {param_name} 연도 {year_part}는 보정 대상이 아니거나 이미 올바름.")
             except ValueError:
-                # 연도 부분이 숫자가 아니거나, 보정된 날짜가 유효하지 않은 경우
                 print(f"⚠️ {param_name} '{original_value}' 연도 부분 '{year_part}'이 숫자가 아니거나 보정 후 날짜가 유효하지 않습니다.")
                 pass
-        
-        else: # 값이 있지만, 위의 조건에 해당하지 않는 이상한 형태
+        else:
             print(f"⚠️ {param_name} '{original_value}'는 예상된 날짜 형식이 아닙니다. 보정을 건너뜀.")
 
     return corrected_params
