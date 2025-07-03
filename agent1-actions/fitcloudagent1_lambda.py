@@ -91,11 +91,17 @@ def smart_date_correction(params):
     corrected_params = params.copy()
     
     # 'from' 또는 'to' 파라미터가 없는 경우, 현재 날짜를 기본값으로 설정
+    # 단, 청구서 API의 경우 billingPeriod가 있으면 from/to를 자동으로 설정하지 않음
     if 'from' not in corrected_params and 'to' not in corrected_params:
-        today_str = f"{current_year}{current_month_str}{current_day_str}"
-        corrected_params['from'] = today_str
-        corrected_params['to'] = today_str
-        print(f"➕ 날짜 파라미터 없음. 오늘 날짜로 기본값 설정: from={today_str}, to={today_str}")
+        # 청구서 API의 경우 billingPeriod가 있으면 from/to를 자동 설정하지 않음
+        # 사용량 API의 경우 billingPeriod를 from/to로 변환하므로 여기서는 자동 설정
+        if 'billingPeriod' in corrected_params:
+            print(f"➕ billingPeriod가 있으므로 from/to 자동 설정 건너뜀: billingPeriod={corrected_params['billingPeriod']}")
+        else:
+            today_str = f"{current_year}{current_month_str}{current_day_str}"
+            corrected_params['from'] = today_str
+            corrected_params['to'] = today_str
+            print(f"➕ 날짜 파라미터 없음. 오늘 날짜로 기본값 설정: from={today_str}, to={today_str}")
 
     for param_name in ['from', 'to']:
         original_value = str(corrected_params.get(param_name, '')) # params.get()으로 안전하게 접근
@@ -591,12 +597,28 @@ def lambda_handler(event, context):
         elif api_path_from_event.startswith('/costs/ondemand/'):
             target_api_path = determine_api_path(params)
             print(f"DEBUG: 비용 API 경로 동적 결정: {api_path_from_event} -> {target_api_path}")
-        elif api_path_from_event.startswith('/invoice/') or api_path_from_event.startswith('/usage/'):
-            # 청구서 및 사용량 API는 람다2에서 처리하므로 그대로 전달
+        elif api_path_from_event.startswith('/invoice/'):
+            # 청구서 API는 람다2에서 처리하므로 그대로 전달
             target_api_path = api_path_from_event
-            print(f"DEBUG: 청구서/사용량 API 경로: {api_path_from_event}")
+            print(f"DEBUG: 청구서 API 경로: {api_path_from_event}")
+        elif api_path_from_event.startswith('/usage/'):
+            # 사용량 API는 람다2에서 처리하므로 그대로 전달
+            target_api_path = api_path_from_event
+            print(f"DEBUG: 사용량 API 경로: {api_path_from_event}")
         else:
-            return create_bedrock_response(event, 404, error_message=f"지원하지 않는 엔드포인트: {api_path_from_event}")
+            # 사용자가 명시적으로 "순수 사용량"을 요청했는지 확인
+            input_text = event.get('inputText', '').lower()
+            if '순수' in input_text and ('사용량' in input_text or 'usage' in input_text):
+                # 순수 사용량 요청이면 람다2의 usage API로 전달
+                if 'account' in input_text or '계정' in input_text:
+                    target_api_path = '/usage/ondemand/account/monthly'
+                else:
+                    target_api_path = '/usage/ondemand/corp/monthly'
+                print(f"DEBUG: 순수 사용량 요청 감지 → {target_api_path}")
+            else:
+                # 기본적으로는 비용(costs) API로 처리
+                target_api_path = determine_api_path(params)
+                print(f"DEBUG: 기본 비용 API 경로 결정: {target_api_path}")
 
         # 토큰 획득
         try:
@@ -637,29 +659,92 @@ def lambda_handler(event, context):
         elif target_api_path == '/costs/ondemand/corp/monthly':
             print("  - 작업: 법인 월별 온디맨드 비용 조회")
             api_data = check_and_prepare_data(['from', 'to'])
+            # billingPeriod가 있으면 추가
+            if 'billingPeriod' in params:
+                api_data['billingPeriod'] = params['billingPeriod']
+                print(f"  - billingPeriod 추가: {api_data['billingPeriod']}")
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, data=api_data, timeout=30)
             
         elif target_api_path == '/costs/ondemand/account/monthly':
             print("  - 작업: 계정 월별 온디맨드 비용 조회")
             api_data = check_and_prepare_data(['from', 'to', 'accountId'])
+            # billingPeriod가 있으면 추가
+            if 'billingPeriod' in params:
+                api_data['billingPeriod'] = params['billingPeriod']
+                print(f"  - billingPeriod 추가: {api_data['billingPeriod']}")
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, data=api_data, timeout=30)
             
         elif target_api_path == '/costs/ondemand/corp/daily':
             print("  - 작업: 법인 일별 온디맨드 비용 조회")
             api_data = check_and_prepare_data(['from', 'to'])
+            # billingPeriodDaily가 있으면 추가
+            if 'billingPeriodDaily' in params:
+                api_data['billingPeriodDaily'] = params['billingPeriodDaily']
+                print(f"  - billingPeriodDaily 추가: {api_data['billingPeriodDaily']}")
+            # serviceName이 있으면 추가 (선택적 파라미터)
+            if 'serviceName' in params:
+                api_data['serviceName'] = params['serviceName']
+                print(f"  - serviceName 추가: {api_data['serviceName']}")
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, data=api_data, timeout=30)
             
         elif target_api_path == '/costs/ondemand/account/daily':
             print("  - 작업: 계정 일별 온디맨드 비용 조회")
             api_data = check_and_prepare_data(['from', 'to', 'accountId'])
+            # billingPeriodDaily가 있으면 추가
+            if 'billingPeriodDaily' in params:
+                api_data['billingPeriodDaily'] = params['billingPeriodDaily']
+                print(f"  - billingPeriodDaily 추가: {api_data['billingPeriodDaily']}")
+            # serviceName이 있으면 추가 (선택적 파라미터)
+            if 'serviceName' in params:
+                api_data['serviceName'] = params['serviceName']
+                print(f"  - serviceName 추가: {api_data['serviceName']}")
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, data=api_data, timeout=30)
             
-        elif target_api_path.startswith('/invoice/') or target_api_path.startswith('/usage/'):
-            print(f"  - 작업: 청구서/사용량 API 호출 ({target_api_path})")
-            # 청구서 및 사용량 API는 람다2에서 처리하므로 파라미터만 전달
-            api_data = check_and_prepare_data(['billingPeriod'] if 'billingPeriod' in params else ['from', 'to'])
+        elif target_api_path.startswith('/invoice/'):
+            print(f"  - 작업: 청구서 API 호출 ({target_api_path})")
+            # 청구서 API는 람다2에서 처리하므로 파라미터만 전달
+            # 청구서는 billingPeriod가 필수
+            api_data = check_and_prepare_data(['billingPeriod'])
+            print(f"  - billingPeriod 사용: {api_data['billingPeriod']}")
+            
             if 'accountId' in params:
                 api_data['accountId'] = params['accountId']
+                print(f"  - accountId 포함: {api_data['accountId']}")
+            
+            response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, data=api_data, timeout=30)
+            
+        elif target_api_path.startswith('/usage/'):
+            print(f"  - 작업: 순수 사용량 API 호출 ({target_api_path})")
+            # 순수 사용량 API는 람다2에서 처리하므로 파라미터만 전달
+            # 사용량은 from/to 또는 beginDate/endDate 사용
+            if 'billingPeriod' in params:
+                # billingPeriod가 있으면 from/to로 변환
+                billing_period = params['billingPeriod']
+                if len(billing_period) == 6:  # YYYYMM 형식
+                    # 해당 월의 첫날과 마지막날로 변환
+                    year = billing_period[:4]
+                    month = billing_period[4:]
+                    from_date = f"{year}{month}01"
+                    # 해당 월의 마지막날 계산
+                    import calendar
+                    last_day = calendar.monthrange(int(year), int(month))[1]
+                    to_date = f"{year}{month}{last_day:02d}"
+                    api_data = {'from': from_date, 'to': to_date}
+                    print(f"  - billingPeriod를 from/to로 변환: {billing_period} → {from_date}~{to_date}")
+                else:
+                    api_data = check_and_prepare_data(['billingPeriod'])
+                    print(f"  - billingPeriod 사용: {api_data['billingPeriod']}")
+            elif 'beginDate' in params and 'endDate' in params:
+                api_data = check_and_prepare_data(['beginDate', 'endDate'])
+                print(f"  - beginDate/endDate 사용: {api_data['beginDate']} ~ {api_data['endDate']}")
+            else:
+                api_data = check_and_prepare_data(['from', 'to'])
+                print(f"  - from/to 사용: {api_data['from']} ~ {api_data['to']}")
+            
+            if 'accountId' in params:
+                api_data['accountId'] = params['accountId']
+                print(f"  - accountId 포함: {api_data['accountId']}")
+            
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, data=api_data, timeout=30)
             
         else:
