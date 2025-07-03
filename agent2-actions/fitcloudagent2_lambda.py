@@ -50,14 +50,33 @@ def get_current_date_info():
     print(f"  - UTC 시간: {datetime.utcnow()}")
     print(f"  - 로컬 시간 (시스템): {datetime.now()}")
     
-    # 더 안정적인 KST 시간 계산
+    # 여러 방법으로 KST 시간 계산 (일관성 확인)
     utc_now = datetime.utcnow()
     tz = pytz.timezone('Asia/Seoul')
-    utc_with_tz = pytz.utc.localize(utc_now)
-    now = utc_with_tz.astimezone(tz)
     
-    print(f"  - UTC 시간 (타임존 적용): {utc_with_tz}")
-    print(f"  - KST 변환 시간: {now}")
+    # 방법 1: UTC 기반 변환
+    utc_with_tz = pytz.utc.localize(utc_now)
+    now_method1 = utc_with_tz.astimezone(tz)
+    
+    # 방법 2: 직접 KST 계산
+    now_method2 = datetime.now(tz)
+    
+    # 방법 3: 수동 KST 계산 (UTC + 9시간)
+    kst_offset = timedelta(hours=9)
+    now_method3 = utc_now + kst_offset
+    
+    print(f"  - 방법 1 (UTC→KST 변환): {now_method1}")
+    print(f"  - 방법 2 (직접 KST): {now_method2}")
+    print(f"  - 방법 3 (수동 +9시간): {now_method3}")
+    
+    # 가장 안정적인 방법 선택 (방법 1)
+    now = now_method1
+    
+    # 일관성 검증
+    if now_method1.date() != now_method2.date():
+        print(f"⚠️ 경고: 시간대 계산 방법 간 차이 발견!")
+        print(f"  - 방법 1: {now_method1.date()}")
+        print(f"  - 방법 2: {now_method2.date()}")
     
     current_info = {
         'current_year': now.year,
@@ -66,10 +85,12 @@ def get_current_date_info():
         'current_datetime': now, # 시간대 정보 포함된 datetime 객체
         'current_date_str': now.strftime('%Y%m%d'),  # YYYYMMDD 형식
         'current_month_str': now.strftime('%Y%m'),   # YYYYMM 형식
-        'timezone': str(now.tzinfo)
+        'timezone': str(now.tzinfo),
+        'utc_time': utc_now.isoformat(),  # UTC 시간도 포함
+        'kst_time': now.isoformat()       # KST 시간도 포함
     }
     
-    print(f"🕐 현재 시간 정보:")
+    print(f"🕐 최종 현재 시간 정보:")
     print(f"  - 현재 날짜/시간: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
     print(f"  - 연도: {current_info['current_year']}")
     print(f"  - 월: {current_info['current_month']}")
