@@ -487,10 +487,12 @@ def lambda_handler(event, context):
             print("--- Raw API Response End ---")
             processed_data_wrapper = process_fitcloud_response(raw_data)
             actual_items_data = processed_data_wrapper.get("data", [])
+            # accountId로 필터링 추가
+            filtered_items_data = [item for item in actual_items_data if str(item.get("accountId")) == str(account_id)]
             # USD 기준 합산 및 표기
             invoice_items = []
             total_invoice_fee_usd = 0.0
-            for item in actual_items_data:
+            for item in filtered_items_data:
                 try:
                     fee_usd = safe_float(item.get("usageFee", 0.0))
                     invoice_items.append({
