@@ -1,4 +1,4 @@
-import json
+햣 import json
 import os
 import requests
 import boto3
@@ -25,14 +25,24 @@ SUMMARY_ITEM_COUNT_THRESHOLD = 20  # 더 많은 항목을 허용
 
 def get_current_date_info():
     """현재 날짜 정보를 KST(한국 표준시) 기준으로 반환합니다."""
-    # 한국 시간대 (KST) 설정
+    # 더 안정적인 KST 시간 계산
+    utc_now = datetime.utcnow()
     tz = pytz.timezone('Asia/Seoul')
-    now = datetime.now(tz) # 시간대 적용된 현재 시각
+    utc_with_tz = pytz.utc.localize(utc_now)
+    now = utc_with_tz.astimezone(tz)
+    
+    print(f"🕐 Lambda 1 현재 시간 정보:")
+    print(f"  - UTC 시간: {utc_now}")
+    print(f"  - KST 시간: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    print(f"  - 현재 날짜: {now.year}년 {now.month}월 {now.day}일")
+    
     return {
         'current_year': now.year,
         'current_month': now.month,
         'current_day': now.day,
-        'current_datetime': now # 시간대 정보 포함된 datetime 객체
+        'current_datetime': now, # 시간대 정보 포함된 datetime 객체
+        'current_date_str': now.strftime('%Y%m%d'),  # YYYYMMDD 형식
+        'current_month_str': now.strftime('%Y%m')    # YYYYMM 형식
     }
 
 def smart_date_correction(params):
