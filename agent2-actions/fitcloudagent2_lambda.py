@@ -50,18 +50,14 @@ def get_current_date_info():
     print(f"  - UTC 시간: {datetime.utcnow()}")
     print(f"  - 로컬 시간 (시스템): {datetime.now()}")
     
-    # 한국 시간대 (KST) 설정
-    tz = pytz.timezone('Asia/Seoul')
-    now = datetime.now(tz) # 시간대 적용된 현재 시각
-    
-    # UTC와 비교
+    # 더 안정적인 KST 시간 계산
     utc_now = datetime.utcnow()
+    tz = pytz.timezone('Asia/Seoul')
     utc_with_tz = pytz.utc.localize(utc_now)
-    kst_now = utc_with_tz.astimezone(tz)
+    now = utc_with_tz.astimezone(tz)
     
     print(f"  - UTC 시간 (타임존 적용): {utc_with_tz}")
-    print(f"  - KST 변환 시간: {kst_now}")
-    print(f"  - 직접 KST 계산: {now}")
+    print(f"  - KST 변환 시간: {now}")
     
     current_info = {
         'current_year': now.year,
