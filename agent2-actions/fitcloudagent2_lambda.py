@@ -276,6 +276,17 @@ def lambda_handler(event, context):
         response = None
         target_api_path = None
 
+        # API 요청 로깅 함수
+        def log_api_request(api_path, request_data, headers_info):
+            """API 요청 정보를 CloudWatch에 로깅합니다."""
+            print(f"🌐 FitCloud API 요청 정보:")
+            print(f"  - URL: {FITCLOUD_BASE_URL}{api_path}")
+            print(f"  - Method: POST")
+            print(f"  - Headers: {json.dumps(headers_info, indent=2, default=custom_json_serializer)}")
+            print(f"  - Request Data: {json.dumps(request_data, indent=2, ensure_ascii=False, default=custom_json_serializer)}")
+            print(f"  - Content-Type: multipart/form-data")
+            print(f"  - Timeout: 30초")
+
         # 공통 파라미터 체크 함수 (필수/선택 파라미터 추출)
         def check_and_get_params(required_params, optional_params=None):
             data = {}
@@ -315,6 +326,10 @@ def lambda_handler(event, context):
                 raise ValueError(f"요청하신 청구월({billing_period})이 미래입니다. 현재 월({current_year}{current_month:02d}) 이전의 월을 입력해주세요.")
 
             prepared_data = prepare_form_data(api_data)
+            
+            # API 요청 로깅
+            log_api_request(target_api_path, api_data, headers)
+            
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepared_data, timeout=30)
             
             raw_data = response.json()
@@ -391,6 +406,10 @@ def lambda_handler(event, context):
                 raise ValueError(f"요청하신 청구월({billing_period})이 미래입니다. 현재 월({current_year}{current_month:02d}) 이전의 월을 입력해주세요.")
 
             prepared_data = prepare_form_data(api_data)
+            
+            # API 요청 로깅
+            log_api_request(target_api_path, api_data, headers)
+            
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepared_data, timeout=30)
             
             raw_data = response.json()
@@ -473,6 +492,10 @@ def lambda_handler(event, context):
                 raise ValueError(f"날짜 범위 오류: {e}. 유효한 YYYYMM 기간을 입력해주세요.")
 
             prepared_data = prepare_form_data(api_data)
+            
+            # API 요청 로깅
+            log_api_request(target_api_path, api_data, headers)
+            
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepared_data, timeout=60) 
             
             raw_data = response.json()
@@ -564,6 +587,10 @@ def lambda_handler(event, context):
                 raise ValueError(f"날짜 범위 오류: {e}. 유효한 YYYYMMDD 기간을 입력해주세요.")
 
             prepared_data = prepare_form_data(api_data)
+            
+            # API 요청 로깅
+            log_api_request(target_api_path, api_data, headers)
+            
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepared_data, timeout=60) 
             
             raw_data = response.json()
@@ -654,6 +681,10 @@ def lambda_handler(event, context):
                 raise ValueError(f"날짜 범위 오류: {e}. 유효한 YYYYMMDD 기간을 입력해주세요.")
 
             prepared_data = prepare_form_data(api_data)
+            
+            # API 요청 로깅
+            log_api_request(target_api_path, api_data, headers)
+            
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepared_data, timeout=60) 
             
             raw_data = response.json()
