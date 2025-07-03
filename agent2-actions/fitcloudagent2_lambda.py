@@ -296,8 +296,18 @@ def extract_parameters(event):
     for k, v in list(params.items()):
         if k in ['from', 'to', 'billingPeriod', 'beginDate', 'endDate']:
             v_str = str(v)
+            # MMDD 형태(4자리)일 때 연도 보정 (agent1 smart_date_correction 참고)
+            if len(v_str) == 4 and v_str.isdigit() and session_current_year:
+                try:
+                    test_date_str = f"{session_current_year}{v_str}"
+                    datetime.strptime(test_date_str, '%Y%m%d')  # 유효성 체크
+                    params[k] = test_date_str
+                    print(f"[extract_parameters] MMDD만 입력된 {k} → {params[k]} (sessionAttributes.current_year 적용)")
+                    continue
+                except ValueError:
+                    print(f"⚠️ {k} '{v_str}'는 유효한 MMDD 형식이 아니거나 연도 추가 후 유효하지 않음.")
+            # 월만 입력된 경우 (1~2자리)
             if (len(v_str) == 1 or (len(v_str) == 2 and v_str.isdigit())) and session_current_year:
-                # 월만 입력된 경우
                 params[k] = f"{session_current_year}{v_str.zfill(2)}"
                 print(f"[extract_parameters] 월만 입력된 {k} → {params[k]} (sessionAttributes.current_year 적용)")
     
