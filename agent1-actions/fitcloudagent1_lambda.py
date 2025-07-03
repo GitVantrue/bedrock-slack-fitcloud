@@ -274,7 +274,7 @@ def process_fitcloud_response(response_data, api_path):
             # 비용 조회 API의 경우 body가 cost_items를 포함함
             if api_path.startswith('/costs/ondemand/'):
                 return {"success": True, "cost_items": body, "message": message, "code": code}
-            else: # 일반적인 body 데이터
+            else: # 일반적인 body 데이터 (인보이스 등)
                 return {"success": True, "data": body, "message": message, "code": code}
         elif code in [203, 204]: 
             # 데이터 없음, 그러나 성공적인 조회 응답으로 처리 (Bedrock Agent가 에러로 인식하지 않도록)
