@@ -199,13 +199,12 @@ def validate_date_logic(params):
                 req_from_month = int(from_str[4:])
                 req_to_year = int(to_str[:4])
                 req_to_month = int(to_str[4:])
-                
-                # 현재 연도와 월을 기준으로 미래인지 판단
-                is_from_future_month = (req_from_year > current_info['current_year']) or \
-                                       (req_from_year == current_info['current_year'] and req_from_month > current_info['current_month'])
-                is_to_future_month = (req_to_year > current_info['current_year']) or \
-                                     (req_to_year == current_info['current_year'] and req_to_month > current_info['current_month'])
-
+                # 현재 연도와 월을 기준으로 미래인지 판단 (오늘이 속한 월보다 이후 월만 미래로 간주)
+                current_year = current_info['current_year']
+                current_month = current_info['current_month']
+                is_from_future_month = (req_from_year > current_year) or (req_from_year == current_year and req_from_month > current_month)
+                is_to_future_month = (req_to_year > current_year) or (req_to_year == current_year and req_to_month > current_month)
+                # 오늘이 속한 월(YYYYMM)까지는 미래로 간주하지 않음
                 if is_from_future_month or is_to_future_month:
                     warnings.append(f"요청하신 월이 미래입니다: {from_str} - {to_str}")
                     
@@ -455,21 +454,20 @@ def determine_api_path(params):
 def extract_parameters(event):
     """이벤트에서 파라미터를 추출합니다."""
     params = {}
-    
+    session_current_year = None
     # Query Parameters (OpenAPI path parameters)
     if 'parameters' in event:
         for param in event['parameters']:
             params[param['name']] = param['value']
-    
     # Request Body Parameters (from Bedrock Agent)
     if 'requestBody' in event and 'content' in event['requestBody']:
         content = event['requestBody']['content']
-        
         # application/x-www-form-urlencoded 처리
         if 'application/x-www-form-urlencoded' in content:
             body_content = content['application/x-www-form-urlencoded']
             if 'body' in body_content: # 기본 바디 형태 (단일 문자열)
                 body_str = body_content['body']
+                from urllib.parse import parse_qs
                 parsed_body = parse_qs(body_str)
                 for key, value_list in parsed_body.items():
                     if value_list:
@@ -477,7 +475,6 @@ def extract_parameters(event):
             elif 'properties' in body_content: # 스키마의 properties 형태
                 for prop_data in body_content['properties']:
                     params[prop_data['name']] = prop_data['value']
-        
         # application/json 처리
         elif 'application/json' in content:
             body_str = content['application/json'].get('body')
@@ -487,16 +484,21 @@ def extract_parameters(event):
                     params.update(json_body)
                 except json.JSONDecodeError:
                     print(f"JSON body 파싱 실패: {body_str[:100]}...")
-                    # 파싱 실패해도 예외 발생시키지 않고 계속 진행
                     pass
-    
-    # 세션 속성에서 날짜 정보 가져오기 (Agent가 전달했다면) - 현재는 smart_date_correction에서 datetime.now() 사용
+    # 세션 속성에서 날짜 정보 가져오기 (Agent가 전달했다면)
     if 'sessionAttributes' in event:
         session_attrs = event['sessionAttributes']
         if 'current_year' in session_attrs:
-            # 이 정보들을 직접 파라미터로 추가하는 대신, get_current_date_info에서 사용하도록 설계
-            print(f"DEBUG: Session Attributes에서 날짜 정보 감지 (참고용): {session_attrs}")
-    
+            session_current_year = str(session_attrs['current_year'])
+            print(f"DEBUG: Session Attributes에서 current_year 감지: {session_current_year}")
+    # 월만 입력된 경우 보정 (current_year 우선 적용)
+    for k, v in list(params.items()):
+        if k in ['from', 'to', 'billingPeriod', 'beginDate', 'endDate']:
+            v_str = str(v)
+            if (len(v_str) == 1 or (len(v_str) == 2 and v_str.isdigit())) and session_current_year:
+                # 월만 입력된 경우
+                params[k] = f"{session_current_year}{v_str.zfill(2)}"
+                print(f"[extract_parameters] 월만 입력된 {k} → {params[k]} (sessionAttributes.current_year 적용)")
     return params
 
 def lambda_handler(event, context):
