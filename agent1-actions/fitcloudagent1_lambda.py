@@ -519,6 +519,9 @@ def extract_parameters(event):
                 # 월만 입력된 경우
                 params[k] = f"{session_current_year}{v_str.zfill(2)}"
                 print(f"[extract_parameters] 월만 입력된 {k} → {params[k]} (sessionAttributes.current_year 적용)")
+    # === 디버깅 로그 추가 ===
+    print(f"[DEBUG] extract_parameters 최종 billingPeriod: {params.get('billingPeriod')}")
+    print(f"[DEBUG] extract_parameters 최종 파라미터: {params}")
     return params
 
 def lambda_handler(event, context):
@@ -540,13 +543,9 @@ def lambda_handler(event, context):
         print(f"📝 원본 추출 파라미터: {params}")
 
         # ✨ 날짜 보정 로직 적용 ✨
-        # 'from' 또는 'to' 파라미터가 없으면, smart_date_correction 내부에서 오늘 날짜로 기본값 설정 시도
         params = smart_date_correction(params)
         print(f"📝 보정 후 파라미터: {params}")
-        
-        date_warnings = validate_date_logic(params) # 보정된 파라미터로 다시 검증
-        
-        # 날짜 유효성 검증에서 경고가 발생하면 클라이언트에게 오류 응답을 반환합니다.
+        date_warnings = validate_date_logic(params)
         if date_warnings:
             print(f"DEBUG: 날짜 유효성 검증 경고: {date_warnings}")
             # 400 Bad Request로 응답하여 Agent가 재요청하거나 사용자에게 알리도록 함
@@ -554,8 +553,10 @@ def lambda_handler(event, context):
                 event, 400, 
                 error_message=f"날짜 오류: {'; '.join(date_warnings)}. 유효한 날짜 또는 기간을 입력해주세요."
             )
-        
         print(f"📝 최종 확인 파라미터: {params}")
+        # === Agent2 위임 직전 디버깅 로그 추가 ===
+        print(f"[DEBUG] Agent2 위임 직전 billingPeriod: {params.get('billingPeriod')}")
+        print(f"[DEBUG] Agent2 위임 직전 전체 파라미터: {params}")
         # ✨ 날짜 보정 로직 적용 끝 ✨
 
         # API 경로 결정 (모든 FitCloud API 경로 지원)
