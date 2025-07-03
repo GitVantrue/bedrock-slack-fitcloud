@@ -322,6 +322,17 @@ def create_bedrock_response(event, status_code=200, response_data=None, error_me
         'current_month_str': current_date_info['current_month_str']
     }
     
+    # 계정 정보를 sessionAttributes에 추가 (계정 목록 조회 시)
+    if response_data and "accounts" in response_data:
+        accounts_info = []
+        for account in response_data["accounts"]:
+            accounts_info.append({
+                "accountName": account.get("accountName", "N/A"),
+                "accountId": account.get("accountId", "N/A")
+            })
+        session_attributes['available_accounts'] = json.dumps(accounts_info, ensure_ascii=False)
+        print(f"📋 계정 정보를 sessionAttributes에 추가: {len(accounts_info)}개 계정")
+    
     final_data = {}
 
     if error_message:

@@ -214,14 +214,26 @@ def extract_parameters(event):
     """이벤트에서 파라미터를 추출합니다."""
     params = {}
     session_current_year = None
+    available_accounts = []
     print(f"🔍 파라미터 추출 시작:")
     
-    # 세션 속성에서 날짜 정보 가져오기 (Agent가 전달했다면)
+    # 세션 속성에서 날짜 정보와 계정 정보 가져오기 (Agent가 전달했다면)
     if 'sessionAttributes' in event:
         session_attrs = event['sessionAttributes']
         if 'current_year' in session_attrs:
             session_current_year = str(session_attrs['current_year'])
             print(f"DEBUG: Session Attributes에서 current_year 감지: {session_current_year}")
+        
+        # 계정 정보 가져오기
+        if 'available_accounts' in session_attrs:
+            try:
+                available_accounts = json.loads(session_attrs['available_accounts'])
+                print(f"DEBUG: Session Attributes에서 available_accounts 감지: {len(available_accounts)}개 계정")
+                for account in available_accounts:
+                    print(f"  - {account.get('accountName', 'N/A')}: {account.get('accountId', 'N/A')}")
+            except json.JSONDecodeError as e:
+                print(f"⚠️ available_accounts JSON 파싱 실패: {e}")
+                available_accounts = []
     
     # Query Parameters (GET 요청 시)
     if 'parameters' in event and event['parameters']:
@@ -288,6 +300,21 @@ def extract_parameters(event):
                 # 월만 입력된 경우
                 params[k] = f"{session_current_year}{v_str.zfill(2)}"
                 print(f"[extract_parameters] 월만 입력된 {k} → {params[k]} (sessionAttributes.current_year 적용)")
+    
+    # 계정명으로 계정ID 찾기 (sessionAttributes의 available_accounts 활용)
+    if available_accounts and 'accountName' in params and not 'accountId' in params:
+        account_name = str(params['accountName']).strip()
+        print(f"🔍 계정명 '{account_name}'으로 계정ID 찾는 중...")
+        
+        for account in available_accounts:
+            if account.get('accountName', '').strip().lower() == account_name.lower():
+                found_account_id = account.get('accountId')
+                params['accountId'] = found_account_id
+                print(f"✅ 계정명 '{account_name}' → 계정ID '{found_account_id}' 매칭 성공")
+                break
+        else:
+            print(f"⚠️ 계정명 '{account_name}'에 해당하는 계정ID를 찾을 수 없습니다.")
+            print(f"  사용 가능한 계정: {[acc.get('accountName') for acc in available_accounts]}")
     
     return params
 
