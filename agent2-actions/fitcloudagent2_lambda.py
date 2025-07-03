@@ -166,6 +166,16 @@ def create_bedrock_response(event, status_code=200, response_data=None, error_me
     api_path_from_event = event.get('apiPath', '') 
     http_method = event.get('httpMethod', 'POST')
     
+    # 현재 날짜 정보를 sessionAttributes에 포함
+    current_date_info = get_current_date_info()
+    session_attributes = {
+        'current_year': str(current_date_info['current_year']),
+        'current_month': str(current_date_info['current_month']),
+        'current_day': str(current_date_info['current_day']),
+        'current_date': current_date_info['current_date_str'],
+        'current_month_str': current_date_info['current_month_str']
+    }
+    
     if error_message:
         response_body = {
             "application/json": {
@@ -196,13 +206,22 @@ def create_bedrock_response(event, status_code=200, response_data=None, error_me
             "httpMethod": http_method,
             "httpStatusCode": status_code,
             "responseBody": response_body 
-        }
+        },
+        "sessionAttributes": session_attributes
     }
 
 def extract_parameters(event):
     """이벤트에서 파라미터를 추출합니다."""
     params = {}
+    session_current_year = None
     print(f"🔍 파라미터 추출 시작:")
+    
+    # 세션 속성에서 날짜 정보 가져오기 (Agent가 전달했다면)
+    if 'sessionAttributes' in event:
+        session_attrs = event['sessionAttributes']
+        if 'current_year' in session_attrs:
+            session_current_year = str(session_attrs['current_year'])
+            print(f"DEBUG: Session Attributes에서 current_year 감지: {session_current_year}")
     
     # Query Parameters (GET 요청 시)
     if 'parameters' in event and event['parameters']:
@@ -260,6 +279,15 @@ def extract_parameters(event):
     print(f"🔍 파라미터 추출 완료: {len(params)}개 파라미터")
     for key, value in params.items():
         print(f"  - {key}: '{value}' (타입: {type(value).__name__})")
+    
+    # 월만 입력된 경우 보정 (session_current_year 우선 적용)
+    for k, v in list(params.items()):
+        if k in ['from', 'to', 'billingPeriod', 'beginDate', 'endDate']:
+            v_str = str(v)
+            if (len(v_str) == 1 or (len(v_str) == 2 and v_str.isdigit())) and session_current_year:
+                # 월만 입력된 경우
+                params[k] = f"{session_current_year}{v_str.zfill(2)}"
+                print(f"[extract_parameters] 월만 입력된 {k} → {params[k]} (sessionAttributes.current_year 적용)")
     
     return params
 
@@ -336,13 +364,8 @@ def lambda_handler(event, context):
                 val = params.get(p)
                 if val is None:
                     raise ValueError(f"필수 파라미터 누락: '{p}'")
-                # 월만 입력된 경우(예: '5', '05', '6', '06')
-                if p in ['billingPeriod', 'from', 'to', 'beginDate', 'endDate'] and (len(str(val)) == 1 or (len(str(val)) == 2 and str(val).isdigit())):
-                    month_str = str(val).zfill(2)
-                    yyyymm = f"{get_current_date_info()['current_year']}{month_str}"
-                    data[p] = yyyymm
-                else:
-                    data[p] = str(val).strip()
+                # extract_parameters에서 이미 날짜 보정이 완료되었으므로 그대로 사용
+                data[p] = str(val).strip()
             # 선택적 파라미터 추가
             if optional_params:
                 for p in optional_params:
