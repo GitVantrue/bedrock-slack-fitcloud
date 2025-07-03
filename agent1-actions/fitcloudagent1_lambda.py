@@ -530,6 +530,13 @@ def extract_parameters(event):
     # === 디버깅 로그 추가 ===
     print(f"[DEBUG] extract_parameters 최종 billingPeriod: {params.get('billingPeriod')}")
     print(f"[DEBUG] extract_parameters 최종 파라미터: {params}")
+    # billingPeriod/billingPeriodDaily 자동 생성 보정
+    if not params.get('billingPeriod') and params.get('from') and len(str(params['from'])) >= 6:
+        params['billingPeriod'] = str(params['from'])[:6]
+        print(f"[extract_parameters] from에서 billingPeriod 자동 생성: {params['billingPeriod']}")
+    if not params.get('billingPeriodDaily') and params.get('from') and len(str(params['from'])) == 8:
+        params['billingPeriodDaily'] = str(params['from'])
+        print(f"[extract_parameters] from에서 billingPeriodDaily 자동 생성: {params['billingPeriodDaily']}")
     return params
 
 def lambda_handler(event, context):
@@ -566,6 +573,16 @@ def lambda_handler(event, context):
         print(f"[DEBUG] Agent2 위임 직전 billingPeriod: {params.get('billingPeriod')}")
         print(f"[DEBUG] Agent2 위임 직전 전체 파라미터: {params}")
         # ✨ 날짜 보정 로직 적용 끝 ✨
+
+        # 월별/일별 기능 진입 전 billingPeriod/billingPeriodDaily 보정
+        if (api_path_from_event in ['/costs/ondemand/account/monthly', '/costs/ondemand/corp/monthly']) and not params.get('billingPeriod'):
+            if params.get('from') and len(str(params['from'])) >= 6:
+                params['billingPeriod'] = str(params['from'])[:6]
+                print(f"[lambda_handler] from에서 billingPeriod 자동 생성: {params['billingPeriod']}")
+        if (api_path_from_event in ['/costs/ondemand/account/daily', '/costs/ondemand/corp/daily']) and not params.get('billingPeriodDaily'):
+            if params.get('from') and len(str(params['from'])) == 8:
+                params['billingPeriodDaily'] = str(params['from'])
+                print(f"[lambda_handler] from에서 billingPeriodDaily 자동 생성: {params['billingPeriodDaily']}")
 
         # API 경로 결정 (모든 FitCloud API 경로 지원)
         target_api_path = None
