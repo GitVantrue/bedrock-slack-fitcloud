@@ -511,6 +511,14 @@ def extract_parameters(event):
     if not session_current_year or session_current_year != real_current_year:
         print(f"⚠️ sessionAttributes.current_year가 '{session_current_year}' → '{real_current_year}'(현재 연도)로 보정됨")
         session_current_year = real_current_year
+    # === inputText에서 월 정보 추출 보조 로직 ===
+    input_text = event.get('inputText', '')
+    import re
+    month_match = re.search(r'([0-9]{1,2})월', input_text)
+    if month_match and not params.get('billingPeriod'):
+        month_str = month_match.group(1).zfill(2)
+        params['billingPeriod'] = f"{session_current_year}{month_str}"
+        print(f"[DEBUG] inputText에서 월 추출 → billingPeriod: {params['billingPeriod']}")
     # 월만 입력된 경우 보정 (current_year 우선 적용)
     for k, v in list(params.items()):
         if k in ['from', 'to', 'billingPeriod', 'beginDate', 'endDate']:
