@@ -255,7 +255,7 @@ def get_fitcloud_token():
 
 def process_fitcloud_response(response_data, api_path):
     """FitCloud API 응답을 처리합니다."""
-    # 응답이 리스트 형태일 경우 (예: /accounts)
+    # 응답이 리스트 형태일 경우 (예: /s)
     if isinstance(response_data, list):
         # /accounts의 경우 'data' 키 없이 바로 리스트를 반환하므로, 'accounts' 키로 래핑
         if api_path == '/accounts':
@@ -505,6 +505,12 @@ def extract_parameters(event):
         if 'current_year' in session_attrs:
             session_current_year = str(session_attrs['current_year'])
             print(f"DEBUG: Session Attributes에서 current_year 감지: {session_current_year}")
+    # session_current_year가 없거나 2025가 아니면 현재 연도로 강제 보정
+    current_info = get_current_date_info()
+    real_current_year = str(current_info['current_year'])
+    if not session_current_year or session_current_year != real_current_year:
+        print(f"⚠️ sessionAttributes.current_year가 '{session_current_year}' → '{real_current_year}'(현재 연도)로 보정됨")
+        session_current_year = real_current_year
     # 월만 입력된 경우 보정 (current_year 우선 적용)
     for k, v in list(params.items()):
         if k in ['from', 'to', 'billingPeriod', 'beginDate', 'endDate']:
