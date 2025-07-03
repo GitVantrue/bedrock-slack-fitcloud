@@ -355,160 +355,120 @@ def lambda_handler(event, context):
             print("📞 법인 월별 청구서 조회 중...")
             target_api_path = '/invoice/corp/monthly'
             api_data = check_and_get_params(['billingPeriod'])
-            
             billing_period = api_data['billingPeriod']
             if not (len(billing_period) == 6 and billing_period.isdigit()):
                 raise ValueError(f"billingPeriod 형식이 올바르지 않습니다: {billing_period}. YYYYMM 형식(예: {get_current_date_info()['current_month_str']})을 사용해주세요.")
-            
             # 미래 월 검증
             current_info = get_current_date_info()
             current_year = current_info['current_year']
             current_month = current_info['current_month']
             req_year = int(billing_period[:4])
             req_month = int(billing_period[4:])
-
             is_future_month = (req_year > current_year) or \
                               (req_year == current_year and req_month > current_month)
             if is_future_month:
                 raise ValueError(f"요청하신 청구월({billing_period})이 미래입니다. 현재 월({current_year}{current_month:02d}) 이전의 월을 입력해주세요.")
-
             prepared_data = prepare_form_data(api_data)
-            
-            # API 요청 로깅
             log_api_request(target_api_path, api_data, headers)
-            
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepared_data, timeout=30)
-            
             raw_data = response.json()
             print("--- Raw API Response Start ---")
             print(json.dumps(raw_data, indent=2, ensure_ascii=False))
             print("--- Raw API Response End ---")
             processed_data_wrapper = process_fitcloud_response(raw_data)
             actual_items_data = processed_data_wrapper.get("data", [])
-            
+            # USD 기준 합산 및 표기
+            invoice_items = []
+            total_invoice_fee_usd = 0.0
+            for item in actual_items_data:
+                try:
+                    fee_usd = safe_float(item.get("usageFee", 0.0))
+                    invoice_items.append({
+                        "serviceName": item.get("invoiceItem", item.get("serviceName", "알 수 없음")),
+                        "usageFeeUSD": round(fee_usd, 2),
+                        "currencyCode": item.get("currencyCode", "USD"),
+                        "note": item.get("note", ""),
+                        "lineItemType": item.get("lineItemType", ""),
+                        "viewIndex": item.get("viewIndex", "")
+                    })
+                    total_invoice_fee_usd += fee_usd
+                except Exception as e:
+                    print(f"[invoice_items] USD 합산 오류: {e}")
+                    continue
             final_response_content = {
                 "success": processed_data_wrapper.get("success", True),
                 "message": processed_data_wrapper.get("message", "조회가 완료되었습니다."),
-                "timestamp": datetime.now(pytz.timezone('Asia/Seoul')), # datetime 객체 그대로 전달
+                "timestamp": datetime.now(pytz.timezone('Asia/Seoul')),
                 "billingPeriod": billing_period,
+                "invoice_items": invoice_items,
+                "total_invoice_fee_usd": round(total_invoice_fee_usd, 2),
+                "item_count": len(invoice_items)
             }
-            
-            invoice_items = []
-            total_usage_fee_krw = 0.0
-            
-            for item in actual_items_data:
-                try:
-                    processed_item = {
-                        "billingPeriod": item.get("billingPeriod"),
-                        "corpName": item.get("corpName"),
-                        "invoiceDivision": item.get("invoiceDivision"),
-                        "viewIndex": item.get("viewIndex"),
-                        "lineItemType": item.get("lineItemType"),
-                        "invoiceItem": item.get("invoiceItem"),
-                        "currencyCode": item.get("currencyCode"),
-                        "usageFee": safe_float(item.get("usageFee", 0.0)),
-                        "usageFeeKrw": safe_float(item.get("usageFeeKrw", 0.0)),
-                        "exchangeRate": item.get("exchangeRate"), # String 타입
-                        "note": item.get("note"),
-                    }
-                    invoice_items.append(processed_item)
-                    total_usage_fee_krw += safe_float(item.get("usageFeeKrw", 0.0))
-                except (ValueError, TypeError) as e:
-                    print(f"경고: 청구서 항목 데이터 처리 오류 (항목 스킵): {item} - {e}")
-                    continue
-            
-            final_response_content["invoice_items"] = invoice_items
-            final_response_content["total_usage_fee_krw"] = round(total_usage_fee_krw, 2)
-            final_response_content["item_count"] = len(invoice_items)
-
             if not invoice_items:
                 final_response_content["message"] = f"{billing_period}에 대한 법인 월별 청구서 데이터가 없습니다."
-                final_response_content["total_usage_fee_krw"] = 0.0
-
+                final_response_content["total_invoice_fee_usd"] = 0.0
             return create_bedrock_response(event, 200, final_response_content)
-
         elif operation_id == 'getAccountMonthlyInvoice':
             print("📞 계정별 월별 청구서 조회 중...")
             target_api_path = '/invoice/account/monthly'
             api_data = check_and_get_params(['billingPeriod', 'accountId'])
-            
             billing_period = api_data['billingPeriod']
             account_id = api_data['accountId']
-
             if not (len(billing_period) == 6 and billing_period.isdigit()):
                 raise ValueError(f"billingPeriod 형식이 올바르지 않습니다: {billing_period}. YYYYMM 형식(예: {get_current_date_info()['current_month_str']})을 사용해주세요.")
             if not (len(account_id) == 12 and account_id.isdigit()):
                 raise ValueError(f"accountId 형식이 올바르지 않습니다: {account_id}. 12자리 숫자를 입력해주세요.")
-
             # 미래 월 검증
             current_info = get_current_date_info()
             current_year = current_info['current_year']
             current_month = current_info['current_month']
             req_year = int(billing_period[:4])
             req_month = int(billing_period[4:])
-
             is_future_month = (req_year > current_year) or \
                               (req_year == current_year and req_month > current_month)
             if is_future_month:
                 raise ValueError(f"요청하신 청구월({billing_period})이 미래입니다. 현재 월({current_year}{current_month:02d}) 이전의 월을 입력해주세요.")
-
             prepared_data = prepare_form_data(api_data)
-            
-            # API 요청 로깅
             log_api_request(target_api_path, api_data, headers)
-            
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepared_data, timeout=30)
-            
             raw_data = response.json()
             print("--- Raw API Response Start ---")
             print(json.dumps(raw_data, indent=2, ensure_ascii=False))
             print("--- Raw API Response End ---")
             processed_data_wrapper = process_fitcloud_response(raw_data)
             actual_items_data = processed_data_wrapper.get("data", [])
-            
+            # USD 기준 합산 및 표기
+            invoice_items = []
+            total_invoice_fee_usd = 0.0
+            for item in actual_items_data:
+                try:
+                    fee_usd = safe_float(item.get("usageFee", 0.0))
+                    invoice_items.append({
+                        "serviceName": item.get("invoiceItem", item.get("serviceName", "알 수 없음")),
+                        "usageFeeUSD": round(fee_usd, 2),
+                        "currencyCode": item.get("currencyCode", "USD"),
+                        "note": item.get("note", ""),
+                        "lineItemType": item.get("lineItemType", ""),
+                        "viewIndex": item.get("viewIndex", "")
+                    })
+                    total_invoice_fee_usd += fee_usd
+                except Exception as e:
+                    print(f"[invoice_items] USD 합산 오류: {e}")
+                    continue
             final_response_content = {
                 "success": processed_data_wrapper.get("success", True),
                 "message": processed_data_wrapper.get("message", "조회가 완료되었습니다."),
-                "timestamp": datetime.now(pytz.timezone('Asia/Seoul')), # datetime 객체 그대로 전달
+                "timestamp": datetime.now(pytz.timezone('Asia/Seoul')),
                 "billingPeriod": billing_period,
                 "accountId": account_id,
+                "invoice_items": invoice_items,
+                "total_invoice_fee_usd": round(total_invoice_fee_usd, 2),
+                "item_count": len(invoice_items)
             }
-            
-            invoice_items = []
-            total_usage_fee_krw = 0.0
-            
-            for item in actual_items_data:
-                try:
-                    processed_item = {
-                        "billingPeriod": item.get("billingPeriod"),
-                        "corpName": item.get("corpName"),
-                        "account_id": item.get("account_id"),
-                        "invoiceDivision": item.get("invoiceDivision"),
-                        "viewIndex": item.get("viewIndex"),
-                        "lineItemType": item.get("lineItemType"),
-                        "invoiceItem": item.get("invoiceItem"),
-                        "currencyCode": item.get("currencyCode"),
-                        "usageFee": safe_float(item.get("usageFee", 0.0)),
-                        "usageFeeKrw": safe_float(item.get("usageFeeKrw", 0.0)),
-                        "exchangeRate": item.get("exchangeRate"), # String 타입
-                        "note": item.get("note"),
-                    }
-                    invoice_items.append(processed_item)
-                    total_usage_fee_krw += safe_float(item.get("usageFeeKrw", 0.0))
-                except (ValueError, TypeError) as e:
-                    print(f"경고: 청구서 항목 데이터 처리 오류 (항목 스킵): {item} - {e}")
-                    continue
-            
-            final_response_content["invoice_items"] = invoice_items
-            final_response_content["total_usage_fee_krw"] = round(total_usage_fee_krw, 2)
-            final_response_content["item_count"] = len(invoice_items)
-
             if not invoice_items:
                 final_response_content["message"] = f"{billing_period}에 대한 계정 {account_id}의 월별 청구서 데이터가 없습니다."
-                final_response_content["total_usage_fee_krw"] = 0.0
-            
+                final_response_content["total_invoice_fee_usd"] = 0.0
             return create_bedrock_response(event, 200, final_response_content)
-
         elif operation_id == 'getOndemandMonthlyUsage':
             print("📞 월별 온디맨드 사용량 조회 중...")
             target_api_path = '/usage/ondemand/monthly'
