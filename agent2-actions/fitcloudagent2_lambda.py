@@ -333,10 +333,16 @@ def lambda_handler(event, context):
             data = {}
             # 필수 파라미터 확인
             for p in required_params:
-                if p not in params or params[p] is None:
+                val = params.get(p)
+                if val is None:
                     raise ValueError(f"필수 파라미터 누락: '{p}'")
-                data[p] = str(params[p]).strip() # 모든 파라미터를 문자열로 변환하고 공백 제거
-
+                # 월만 입력된 경우(예: '5', '05', '6', '06')
+                if p in ['billingPeriod', 'from', 'to', 'beginDate', 'endDate'] and (len(str(val)) == 1 or (len(str(val)) == 2 and str(val).isdigit())):
+                    month_str = str(val).zfill(2)
+                    yyyymm = f"{get_current_date_info()['current_year']}{month_str}"
+                    data[p] = yyyymm
+                else:
+                    data[p] = str(val).strip()
             # 선택적 파라미터 추가
             if optional_params:
                 for p in optional_params:
