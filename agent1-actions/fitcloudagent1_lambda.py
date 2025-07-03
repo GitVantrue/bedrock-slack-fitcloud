@@ -343,47 +343,39 @@ def create_bedrock_response(event, status_code=200, response_data=None, error_me
 
         elif "cost_items" in response_data:
             cost_items = []
-            total_cost_sum = 0.0 # 필드명 변경: total_cost와 구분
-            
+            total_cost_sum_usd = 0.0 # USD 기준 총합
             is_daily = response_data.get("cost_type") == "daily"
             is_account_level = response_data.get("scope") == "account"
-
             for item in response_data["cost_items"]:
                 try:
-                    cost = float(item.get('usageFee', 0.0))
-                    # 0원 항목도 포함 (필터링은 Agent에 맡김, 아니면 여기서 0원 제거)
-                    # if cost > 0: # 0원 항목 제외하려면 이 조건 추가
+                    # USD 기준으로만 금액 집계
+                    cost_usd = float(item.get('usageFee', 0.0))
                     cost_item = {
                         "serviceName": item.get('serviceName', '알 수 없음'),
-                        "usageFee": round(cost, 2) # 소수점 둘째 자리까지 반올림
+                        "usageFeeUSD": round(cost_usd, 2) # 소수점 둘째 자리까지 반올림
                     }
-                    
                     # 날짜 필드 추가 (일별/월별 구분)
                     if is_daily:
-                        cost_item["date"] = item.get('dailyDate') # Lambda에서 받은 날짜 그대로 사용
+                        cost_item["date"] = item.get('dailyDate')
                     else:
-                        cost_item["date"] = item.get('monthlyDate') # Lambda에서 받은 날짜 그대로 사용
-                    
+                        cost_item["date"] = item.get('monthlyDate')
                     # 계정별 조회인 경우 계정 정보 추가
                     if is_account_level:
                         cost_item["accountId"] = item.get('accountId', 'N/A')
-                        cost_item["accountName"] = item.get('accountName', '알 수 없음') 
-
+                        cost_item["accountName"] = item.get('accountName', '알 수 없음')
                     cost_items.append(cost_item)
-                    total_cost_sum += cost
+                    total_cost_sum_usd += cost_usd
                 except (ValueError, TypeError) as e:
                     print(f"데이터 처리 오류 (비용 항목 스킵): {item} - {e}")
                     continue
-            
-            final_data["cost_type"] = response_data.get("cost_type") # "daily" 또는 "monthly"
-            final_data["scope"] = response_data.get("scope") # "account" 또는 "corp"
+            final_data["cost_type"] = response_data.get("cost_type")
+            final_data["scope"] = response_data.get("scope")
             final_data["cost_items"] = cost_items
-            final_data["total_cost"] = round(total_cost_sum, 2) # 총합은 여기서 계산
+            final_data["total_cost_usd"] = round(total_cost_sum_usd, 2) # USD 총합
             final_data["item_count"] = len(cost_items)
-
             if not cost_items:
                 final_data["message"] = f"조회된 비용 데이터가 없습니다."
-                final_data["total_cost"] = 0.0 # 데이터 없으면 총합 0
+                final_data["total_cost_usd"] = 0.0
 
         elif "data" in response_data: # 그 외 일반적인 데이터 리스트
             final_data["data"] = response_data["data"]
