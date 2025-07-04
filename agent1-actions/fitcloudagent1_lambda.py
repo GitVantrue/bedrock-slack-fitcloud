@@ -828,6 +828,113 @@ def extract_parameters(event):
     
     return params
 
+# --- 주요 처리 함수들을 lambda_handler 위로 이동 ---
+
+def process_usage_response(raw_data, from_period, to_period, is_daily=False, is_tag=False):
+    header = raw_data.get('header', {})
+    code = header.get('code')
+    message = header.get('message', '')
+    body = raw_data.get('body', [])
+    if body is None:
+        body = []
+    if code not in [200, 203, 204]:
+        raise ValueError(f"FitCloud API error {code}: {message}")
+    items = []
+    total_on_demand_cost = 0.0
+    for item in body:
+        try:
+            usage_amount = safe_float(item.get("usageAmount", 0.0))
+            on_demand_cost = safe_float(item.get("onDemandCost", 0.0))
+            if on_demand_cost == 0.0:
+                continue  # 0원만 제외, 음수(할인)는 포함
+            parsed_tags_json = {}
+            if 'tagsJson' in item and isinstance(item['tagsJson'], str):
+                try:
+                    parsed_tags_json = json.loads(item['tagsJson'])
+                except Exception:
+                    parsed_tags_json = {}
+            elif 'tagsJson' in item and isinstance(item['tagsJson'], dict):
+                parsed_tags_json = item['tagsJson']
+            processed_item = {
+                "accountId": item.get("accountId"),
+                "usageType": item.get("usageType"),
+                "usageAmount": usage_amount,
+                "productCode": item.get("productCode"),
+                "region": item.get("region"),
+                "serviceCode": item.get("serviceCode"),
+                "tagsJson": parsed_tags_json,
+                "billingPeriod": item.get("billingPeriod"),
+                "onDemandCost": on_demand_cost,
+                "billingEntity": item.get("billingEntity"),
+                "serviceName": item.get("serviceName"),
+                "date": item.get("date") or item.get("dailyDate") or item.get("monthlyDate") or item.get("billingPeriod")
+            }
+            items.append(processed_item)
+            total_on_demand_cost += on_demand_cost
+        except Exception:
+            continue
+    key = "usage_tag_items" if is_tag else "usage_items"
+    # 요약/분석 메시지 생성
+    if is_tag:
+        summary_msg = summarize_tag_items_table(items, from_period, to_period)
+    else:
+        month_str = ''
+        if items and ('dailyDate' in items[0] or (items[0].get('date') and len(str(items[0].get('date'))) == 8)):
+            month_str = str(items[0].get('date') or items[0].get('dailyDate') or '')[:6]
+        elif items and 'monthlyDate' in items[0]:
+            month_str = items[0]['monthlyDate'][:6]
+        elif items and 'billingPeriod' in items[0]:
+            month_str = items[0]['billingPeriod']
+        summary_msg = summarize_cost_items_table(items, month_str, is_daily=is_daily)
+    return {
+        "success": True,
+        "message": summary_msg,
+        "from": from_period,
+        "to": to_period,
+        key: items,
+        "total_on_demand_cost": round(total_on_demand_cost, 2),
+        "item_count": len(items)
+    }
+
+def process_invoice_response(raw_data, billing_period, account_id=None):
+    # 람다2의 invoice 응답 포맷을 참고하여 통합
+    header = raw_data.get('header', {})
+    code = header.get('code')
+    message = header.get('message', '')
+    body = raw_data.get('body', [])
+    if body is None:
+        body = []
+    if code not in [200, 203, 204]:
+        raise ValueError(f"FitCloud API error {code}: {message}")
+    # accountId 필터링
+    if account_id:
+        body = [item for item in body if str(item.get("accountId")) == str(account_id)]
+    invoice_items = []
+    total_invoice_fee_usd = 0.0
+    for item in body:
+        fee_usd = safe_float(item.get("usageFee", 0.0))
+        if fee_usd == 0.0:
+            continue  # 0원만 제외, 음수(할인)는 포함
+        invoice_items.append({
+            "serviceName": item.get("invoiceItem", item.get("serviceName", "알 수 없음")),
+            "usageFeeUSD": round(fee_usd, 2),
+            "currencyCode": item.get("currencyCode", "USD"),
+            "note": item.get("note", ""),
+            "lineItemType": item.get("lineItemType", ""),
+            "viewIndex": item.get("viewIndex", "")
+        })
+        total_invoice_fee_usd += fee_usd
+    summary_msg = summarize_invoice_items(invoice_items, billing_period)
+    return {
+        "success": True,
+        "message": summary_msg,
+        "billingPeriod": billing_period,
+        **({"accountId": account_id} if account_id else {}),
+        "invoice_items": invoice_items,
+        "total_invoice_fee_usd": round(total_invoice_fee_usd, 2),
+        "item_count": len(invoice_items)
+    }
+
 def lambda_handler(event, context):
     print(f"🚀 통합 Lambda 시작: {event.get('apiPath', 'N/A')}")
     print(f"[DEBUG] Raw event: {json.dumps(event, ensure_ascii=False)[:1000]}")
