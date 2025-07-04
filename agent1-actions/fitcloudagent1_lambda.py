@@ -535,70 +535,6 @@ def process_invoice_response(raw_data, billing_period, account_id=None):
         "item_count": len(invoice_items)
     }
 
-def process_usage_response(raw_data, from_period, to_period, is_daily=False, is_tag=False):
-    header = raw_data.get('header', {})
-    code = header.get('code')
-    message = header.get('message', '')
-    body = raw_data.get('body', [])
-    if body is None:
-        body = []
-    if code not in [200, 203, 204]:
-        raise ValueError(f"FitCloud API error {code}: {message}")
-    items = []
-    total_on_demand_cost = 0.0
-    for item in body:
-        try:
-            usage_amount = safe_float(item.get("usageAmount", 0.0))
-            on_demand_cost = safe_float(item.get("onDemandCost", 0.0))
-            if on_demand_cost == 0.0:
-                continue  # 0원만 제외, 음수(할인)는 포함
-            parsed_tags_json = {}
-            if 'tagsJson' in item and isinstance(item['tagsJson'], str):
-                try:
-                    parsed_tags_json = json.loads(item['tagsJson'])
-                except Exception:
-                    parsed_tags_json = {}
-            elif 'tagsJson' in item and isinstance(item['tagsJson'], dict):
-                parsed_tags_json = item['tagsJson']
-            processed_item = {
-                "accountId": item.get("accountId"),
-                "usageType": item.get("usageType"),
-                "usageAmount": usage_amount,
-                "productCode": item.get("productCode"),
-                "region": item.get("region"),
-                "serviceCode": item.get("serviceCode"),
-                "tagsJson": parsed_tags_json,
-                "billingPeriod": item.get("billingPeriod"),
-                "onDemandCost": on_demand_cost,
-                "billingEntity": item.get("billingEntity"),
-                "serviceName": item.get("serviceName"),
-                # 일별/월별 구분을 위해 date 필드 추가
-                "date": item.get("date") or item.get("dailyDate") or item.get("monthlyDate") or item.get("billingPeriod")
-            }
-            items.append(processed_item)
-            total_on_demand_cost += on_demand_cost
-        except Exception:
-            continue
-    key = "usage_tag_items" if is_tag else "usage_items"
-    # 요약/분석 메시지 생성
-    month_str = ''
-    if items and ('dailyDate' in items[0] or (items[0].get('date') and len(str(items[0].get('date'))) == 8)):
-        month_str = str(items[0].get('date') or items[0].get('dailyDate') or '')[:6]
-    elif items and 'monthlyDate' in items[0]:
-        month_str = items[0]['monthlyDate'][:6]
-    elif items and 'billingPeriod' in items[0]:
-        month_str = items[0]['billingPeriod']
-    summary_msg = summarize_cost_items_table(items, month_str, is_daily=is_daily)
-    return {
-        "success": True,
-        "message": summary_msg,
-        "from": from_period,
-        "to": to_period,
-        key: items,
-        "total_on_demand_cost": round(total_on_demand_cost, 2),
-        "item_count": len(items)
-    }
-
 def summarize_cost_items(cost_items, month_str, account_names=None):
     if not cost_items:
         return f"{month_str} 온디맨드 사용 데이터가 없습니다."
@@ -716,6 +652,36 @@ def summarize_invoice_items(invoice_items, billing_period):
         msg += f"- {top_services[0][0]}가 전체 청구 금액의 {top_services[0][1]/total*100:.1f}% 차지\n"
     msg += f"- 총 {len(invoice_items)}개 청구 항목\n"
     msg += "이 금액은 실제 결제 금액 기준의 최종 청구 내역을 포함합니다. 할인, 크레딧, RI, SP 등 모든 내역이 반영되어 있습니다."
+    return msg
+
+def summarize_tag_items_table(tag_items, begin_date, end_date):
+    if not tag_items:
+        return f"{begin_date}~{end_date} 태그별 온디맨드 사용 데이터가 없습니다."
+    from collections import defaultdict
+    tag_sum = defaultdict(float)
+    total = 0.0
+    for item in tag_items:
+        tags = item.get('tagsJson', {})
+        if isinstance(tags, str):
+            try:
+                tags = json.loads(tags)
+            except Exception:
+                tags = {}
+        # 대표 태그명: Project, Env, Owner 등 우선, 없으면 기타
+        tag_str = ', '.join([f"{k}:{v}" for k, v in tags.items()]) if tags else '기타'
+        val = item.get('usageFeeUSD', item.get('onDemandCost', 0.0))
+        tag_sum[tag_str] += val
+        total += val
+    top_tags = sorted(tag_sum.items(), key=lambda x: abs(x[1]), reverse=True)[:10]
+    etc = total - sum(x[1] for x in top_tags)
+    msg = f"### {begin_date}~{end_date} 태그별 온디맨드 사용금액 상위 10개 태그\n"
+    msg += "| 태그 | 금액(USD) | 비율(%) |\n|---|---:|---:|\n"
+    for name, val in top_tags:
+        percent = val / total * 100 if total else 0
+        msg += f"| {name} | ${val:,.2f} | {percent:.1f}% |\n"
+    if etc > 0:
+        msg += f"| 기타 | ${etc:,.2f} | {etc/total*100:.1f}% |\n"
+    msg += f"| **총합** | **${total:,.2f}** | 100% |\n"
     return msg
 
 def determine_api_path(params):
