@@ -8,6 +8,7 @@ from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 from datetime import datetime, timedelta
 import pytz # KST 시간대 처리를 위해 pytz 라이브러리 추가
+from datetime import date
 
 # 환경 변수에서 FitCloud API 기본 URL 및 Secrets Manager 보안 암호 가져오기
 FITCLOUD_BASE_URL = os.environ.get('FITCLOUD_BASE_URL', 'https://aws-dev.fitcloud.co.kr/api/v1')
@@ -459,6 +460,89 @@ def create_bedrock_response(event, status_code=200, response_data=None, error_me
         "sessionAttributes": session_attributes
     }
 
+def process_invoice_response(raw_data, billing_period, account_id=None):
+    # 람다2의 invoice 응답 포맷을 참고하여 통합
+    header = raw_data.get('header', {})
+    code = header.get('code')
+    message = header.get('message', '')
+    body = raw_data.get('body', [])
+    if code not in [200, 203, 204]:
+        raise ValueError(f"FitCloud API error {code}: {message}")
+    # accountId 필터링
+    if account_id:
+        body = [item for item in body if str(item.get("accountId")) == str(account_id)]
+    invoice_items = []
+    total_invoice_fee_usd = 0.0
+    for item in body:
+        fee_usd = safe_float(item.get("usageFee", 0.0))
+        invoice_items.append({
+            "serviceName": item.get("invoiceItem", item.get("serviceName", "알 수 없음")),
+            "usageFeeUSD": round(fee_usd, 2),
+            "currencyCode": item.get("currencyCode", "USD"),
+            "note": item.get("note", ""),
+            "lineItemType": item.get("lineItemType", ""),
+            "viewIndex": item.get("viewIndex", "")
+        })
+        total_invoice_fee_usd += fee_usd
+    return {
+        "success": True,
+        "message": message or "조회가 완료되었습니다.",
+        "billingPeriod": billing_period,
+        **({"accountId": account_id} if account_id else {}),
+        "invoice_items": invoice_items,
+        "total_invoice_fee_usd": round(total_invoice_fee_usd, 2),
+        "item_count": len(invoice_items)
+    }
+
+def process_usage_response(raw_data, from_period, to_period, is_daily=False, is_tag=False):
+    header = raw_data.get('header', {})
+    code = header.get('code')
+    message = header.get('message', '')
+    body = raw_data.get('body', [])
+    if code not in [200, 203, 204]:
+        raise ValueError(f"FitCloud API error {code}: {message}")
+    items = []
+    total_on_demand_cost = 0.0
+    for item in body:
+        try:
+            usage_amount = safe_float(item.get("usageAmount", 0.0))
+            on_demand_cost = safe_float(item.get("onDemandCost", 0.0))
+            parsed_tags_json = {}
+            if 'tagsJson' in item and isinstance(item['tagsJson'], str):
+                try:
+                    parsed_tags_json = json.loads(item['tagsJson'])
+                except Exception:
+                    parsed_tags_json = {}
+            elif 'tagsJson' in item and isinstance(item['tagsJson'], dict):
+                parsed_tags_json = item['tagsJson']
+            processed_item = {
+                "accountId": item.get("accountId"),
+                "usageType": item.get("usageType"),
+                "usageAmount": usage_amount,
+                "productCode": item.get("productCode"),
+                "region": item.get("region"),
+                "serviceCode": item.get("serviceCode"),
+                "tagsJson": parsed_tags_json,
+                "billingPeriod": item.get("billingPeriod"),
+                "onDemandCost": on_demand_cost,
+                "billingEntity": item.get("billingEntity"),
+                "serviceName": item.get("serviceName"),
+            }
+            items.append(processed_item)
+            total_on_demand_cost += on_demand_cost
+        except Exception:
+            continue
+    key = "usage_tag_items" if is_tag else "usage_items"
+    return {
+        "success": True,
+        "message": message or "조회가 완료되었습니다.",
+        "from": from_period,
+        "to": to_period,
+        key: items,
+        "total_on_demand_cost": round(total_on_demand_cost, 2),
+        "item_count": len(items)
+    }
+
 def determine_api_path(params):
     """
     파라미터 기반으로 올바른 API 경로 결정 (On-Demand 비용 조회용)
@@ -575,220 +659,126 @@ def extract_parameters(event):
     return params
 
 def lambda_handler(event, context):
-    print(f"🚀 Lambda 1 시작: {event.get('apiPath', 'N/A')}")
-    print(f"[DEBUG] Raw event: {json.dumps(event, ensure_ascii=False)[:1000]}")  # 이벤트 전체(1000자 제한) 로그
+    print(f"🚀 통합 Lambda 시작: {event.get('apiPath', 'N/A')}")
+    print(f"[DEBUG] Raw event: {json.dumps(event, ensure_ascii=False)[:1000]}")
 
-    api_path_from_event = event.get('apiPath')
+    # 1. 파라미터 추출 및 보정
+    params = extract_parameters(event)
+    params = smart_date_correction(params)
+    input_text = event.get('inputText', '').lower()
+    api_path_from_event = event.get('apiPath', '')
+
+    # 2. 사용자 의도/지침서 기반 API 분기
+    is_invoice_request = any(k in input_text for k in ['청구서', 'invoice', '인보이스', '최종 청구 금액', '실제 결제 금액', '실제 지불 금액'])
+    is_usage_request = any(k in input_text for k in ['순수 온디맨드', '순수 사용량', '할인 미적용', 'ri/sp 제외', '원가 기준', '할인 금액이 포함되지 않은', '할인 전 금액', '정가 기준', 'pure usage'])
+    is_tag_usage = '태그' in input_text or 'tag' in input_text
+    has_account = 'accountId' in params or 'accountName' in params or any(k in input_text for k in ['계정', 'account', '개발계정', 'dev'])
+
+    # 3. API 경로 결정 (지침서/오픈스키마 기준)
+    target_api_path = None
+    api_type = None
     if api_path_from_event == '/accounts':
-        # 계정 목록 조회는 파라미터/날짜/계정 검증 없이 바로 호출
-        try:
-            current_token = get_fitcloud_token()
-            print("[DEBUG] FitCloud API 토큰 획득 성공 (/accounts)")
-            session = create_retry_session()
-            headers = {
-                'Authorization': f'Bearer {current_token}',
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'User-Agent': 'FitCloud-Lambda/1.0'
-            }
-            print("[DEBUG] /accounts API 호출")
-            response = session.post(f'{FITCLOUD_BASE_URL}/accounts', headers=headers, timeout=30)
-            response.raise_for_status()
-            raw_data = response.json()
-            print(f"[DEBUG] /accounts API 응답: {json.dumps(raw_data, ensure_ascii=False)[:1000]}")
-            processed_data_wrapper = process_fitcloud_response(raw_data, '/accounts')
-            print(f"[DEBUG] /accounts 최종 응답 데이터: {processed_data_wrapper}")
-            return create_bedrock_response(event, 200, processed_data_wrapper)
-        except Exception as e:
-            error_msg = f"계정 목록 조회 중 오류: {type(e).__name__} - {str(e)}"
-            print(f"[ERROR] {error_msg}")
-            return create_bedrock_response(event, 500, error_message=error_msg)
+        target_api_path = '/accounts'
+        api_type = 'accounts'
+    elif is_invoice_request:
+        if has_account:
+            target_api_path = '/invoice/account/monthly'
+            api_type = 'invoice_account'
+        else:
+            target_api_path = '/invoice/corp/monthly'
+            api_type = 'invoice_corp'
+    elif is_usage_request:
+        if is_tag_usage:
+            target_api_path = '/usage/ondemand/tags'
+            api_type = 'usage_tag'
+        else:
+            # 월/일 구분
+            if 'from' in params and len(str(params['from'])) == 8:
+                target_api_path = '/usage/ondemand/daily'
+                api_type = 'usage_daily'
+            else:
+                target_api_path = '/usage/ondemand/monthly'
+                api_type = 'usage_monthly'
+    else:
+        # 기본 비용(costs) API
+        if 'from' in params and len(str(params['from'])) == 8:
+            target_api_path = '/costs/ondemand/account/daily' if has_account else '/costs/ondemand/corp/daily'
+            api_type = 'costs_daily'
+        else:
+            target_api_path = '/costs/ondemand/account/monthly' if has_account else '/costs/ondemand/corp/monthly'
+            api_type = 'costs_monthly'
 
+    print(f"[DEBUG] API 분기: {target_api_path} ({api_type})")
+
+    # 4. 필수 파라미터 검증
+    date_warnings = validate_date_logic(params, target_api_path)
+    if date_warnings:
+        print(f"[ERROR] 날짜/파라미터 검증 실패: {date_warnings}")
+        return create_bedrock_response(event, 400, error_message=f"날짜/파라미터 오류: {'; '.join(date_warnings)}. 유효한 값을 입력해주세요.")
+
+    # 5. 토큰 및 세션 준비
     try:
-        if 'messageVersion' not in event or 'actionGroup' not in event:
-            print("[ERROR] Bedrock Agent에서 온 이벤트 포맷 오류")
-            return create_bedrock_response(event, 400, error_message="Invalid event format from Bedrock Agent.")
-
-        # 파라미터 추출
-        params = extract_parameters(event)
-        print(f"[DEBUG] 추출된 파라미터: {params}")
-
-        # 날짜 보정
-        params = smart_date_correction(params)
-        print(f"[DEBUG] 날짜 보정 후 파라미터: {params}")
-
-        # 사용자 의도 파악 (지침서 기준)
-        input_text = event.get('inputText', '').lower()
-        is_invoice_request = any(k in input_text for k in ['청구서', 'invoice', '인보이스', '최종 청구 금액', '실제 결제 금액', '실제 지불 금액'])
-        is_usage_request = any(k in input_text for k in ['순수 온디맨드', '순수 사용량', '할인 미적용', 'ri/sp 제외', '원가 기준', '할인 금액이 포함되지 않은', '할인 전 금액', '정가 기준', 'pure usage'])
-        has_account = any(k in input_text for k in ['계정', 'account', '개발계정', 'dev'])
-        print(f"[DEBUG] 사용자 의도 분석: is_invoice={is_invoice_request}, is_usage={is_usage_request}, has_account={has_account}")
-
-        # 1. 청구서/인보이스 요청이면 람다2로 위임
-        if is_invoice_request:
-            if has_account:
-                target_api_path = '/invoice/account/monthly'
-            else:
-                target_api_path = '/invoice/corp/monthly'
-            print(f"[DEBUG] 청구서 요청 → {target_api_path}")
-        # 2. 순수 온디맨드/순수 사용량/할인 미적용 요청이면 람다2로 위임
-        elif is_usage_request:
-            if has_account:
-                target_api_path = '/usage/ondemand/account/monthly'
-            else:
-                target_api_path = '/usage/ondemand/corp/monthly'
-            print(f"[DEBUG] 순수 사용량 요청 → {target_api_path}")
-        # 3. 그 외는 costs API(람다1)에서 직접 처리
-        else:
-            if has_account:
-                target_api_path = '/costs/ondemand/account/monthly'
-            else:
-                target_api_path = '/costs/ondemand/corp/monthly'
-            print(f"[DEBUG] 일반 비용/사용량 요청 → {target_api_path}")
-            # costs API에서만 billingPeriod → from/to 변환
-            if 'billingPeriod' in params and not ('from' in params and 'to' in params):
-                billing_period = str(params['billingPeriod'])
-                if len(billing_period) == 6:
-                    params['from'] = billing_period
-                    params['to'] = billing_period
-                    print(f"[DEBUG] billingPeriod 변환: {billing_period} → from/to (비용 API용)")
-
-        # 날짜 검증
-        date_warnings = validate_date_logic(params, target_api_path)
-        if date_warnings:
-            print(f"[ERROR] 날짜 검증 실패: {date_warnings}")
-            return create_bedrock_response(
-                event, 400, 
-                error_message=f"날짜 오류: {'; '.join(date_warnings)}. 유효한 날짜 또는 기간을 입력해주세요."
-            )
-
-        # 이하 기존 API 호출 분기 및 응답 처리 로직은 target_api_path 기준으로 그대로 유지
-        # 토큰 획득
-        try:
-            current_token = get_fitcloud_token()
-            print("[DEBUG] FitCloud API 토큰 획득 성공")
-        except RuntimeError as e:
-            print(f"[ERROR] 토큰 획득 실패: {e}")
-            return create_bedrock_response(event, 401, error_message=f"FitCloud API 인증 실패: {str(e)}")
-
-        # 세션 및 헤더 설정
-        session = create_retry_session()
-        headers = {
-            'Authorization': f'Bearer {current_token}',
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'User-Agent': 'FitCloud-Lambda/1.0'
-        }
-
-        # API 호출 로직 (target_api_path 기반으로 분기)
-        response = None
-        print(f"[DEBUG] API 호출 준비: {target_api_path}, 파라미터: {params}")
-        if target_api_path == '/accounts':
-            print("  - 계정 목록 조회")
-            response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, timeout=30)
-            
-        elif target_api_path == '/costs/ondemand/corp/monthly':
-            print("  - 법인 월별 비용 조회")
-            api_data = check_and_prepare_data(['from', 'to'])
-            if 'billingPeriod' in params:
-                api_data['billingPeriod'] = params['billingPeriod']
-            response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, data=api_data, timeout=30)
-            
-        elif target_api_path == '/costs/ondemand/account/monthly':
-            print("  - 계정 월별 비용 조회")
-            api_data = check_and_prepare_data(['from', 'to', 'accountId'])
-            if 'billingPeriod' in params:
-                api_data['billingPeriod'] = params['billingPeriod']
-            response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, data=api_data, timeout=30)
-            
-        elif target_api_path == '/costs/ondemand/corp/daily':
-            print("  - 법인 일별 비용 조회")
-            api_data = check_and_prepare_data(['from', 'to'])
-            if 'billingPeriodDaily' in params:
-                api_data['billingPeriodDaily'] = params['billingPeriodDaily']
-            if 'serviceName' in params:
-                api_data['serviceName'] = params['serviceName']
-            response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, data=api_data, timeout=30)
-            
-        elif target_api_path == '/costs/ondemand/account/daily':
-            print("  - 계정 일별 비용 조회")
-            api_data = check_and_prepare_data(['from', 'to', 'accountId'])
-            if 'billingPeriodDaily' in params:
-                api_data['billingPeriodDaily'] = params['billingPeriodDaily']
-            if 'serviceName' in params:
-                api_data['serviceName'] = params['serviceName']
-            response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, data=api_data, timeout=30)
-            
-        elif target_api_path.startswith('/invoice/'):
-            print(f"  - 청구서 API 호출")
-            api_data = check_and_prepare_data(['billingPeriod'])
-            
-            if 'accountId' in params:
-                api_data['accountId'] = params['accountId']
-            
-            response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, data=api_data, timeout=30)
-            
-        elif target_api_path.startswith('/usage/'):
-            print(f"  - 사용량 API 호출")
-            if 'billingPeriod' in params:
-                billing_period = params['billingPeriod']
-                if len(billing_period) == 6:
-                    year = billing_period[:4]
-                    month = billing_period[4:]
-                    from_date = f"{year}{month}01"
-                    import calendar
-                    last_day = calendar.monthrange(int(year), int(month))[1]
-                    to_date = f"{year}{month}{last_day:02d}"
-                    api_data = {'from': from_date, 'to': to_date}
-                else:
-                    api_data = check_and_prepare_data(['billingPeriod'])
-            elif 'beginDate' in params and 'endDate' in params:
-                api_data = check_and_prepare_data(['beginDate', 'endDate'])
-            else:
-                api_data = check_and_prepare_data(['from', 'to'])
-            
-            if 'accountId' in params:
-                api_data['accountId'] = params['accountId']
-            
-            response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, data=api_data, timeout=30)
-            
-        else:
-            return create_bedrock_response(event, 404, error_message=f"처리할 수 없는 API 경로: {target_api_path}")
-
-        # 응답 처리
-        try:
-            response.raise_for_status()
-        except Exception as e:
-            print(f"[ERROR] API HTTP 오류: {e}, 응답: {getattr(response, 'text', None)}")
-            raise
-        try:
-            raw_data = response.json()
-        except Exception as e:
-            print(f"[ERROR] API 응답 JSON 파싱 오류: {e}, 응답: {getattr(response, 'text', None)}")
-            raise
-        print(f"[DEBUG] API 응답 수신: {json.dumps(raw_data, ensure_ascii=False)[:1000]}")
-
-        processed_data_wrapper = process_fitcloud_response(raw_data, target_api_path) 
-        print(f"[DEBUG] 최종 응답 데이터: {processed_data_wrapper}")
-        return create_bedrock_response(event, 200, processed_data_wrapper)
-
-    except ValueError as e:
-        error_msg = f"잘못된 요청 파라미터 또는 형식: {str(e)}"
-        print(f"[ERROR] {error_msg}")
-        return create_bedrock_response(event, 400, error_message=error_msg)
-    except requests.exceptions.HTTPError as e:
-        status_code = e.response.status_code if e.response is not None else 500
-        response_text = e.response.text[:200] if e.response and e.response.text else "응답 내용 없음"
-        error_msg = f"FitCloud API 통신 오류: {status_code} - {response_text}..."
-        print(f"[ERROR] {error_msg}")
-        return create_bedrock_response(event, status_code, error_message=error_msg)
-    except requests.exceptions.ConnectionError as e:
-        error_msg = f"FitCloud API 연결 오류: {str(e)}. 네트워크 상태를 확인해주세요."
-        print(f"[ERROR] {error_msg}")
-        return create_bedrock_response(event, 503, error_message=error_msg)
-    except requests.exceptions.Timeout as e:
-        error_msg = f"FitCloud API 응답 시간 초과: {str(e)}. 잠시 후 다시 시도해주세요."
-        print(f"[ERROR] {error_msg}")
-        return create_bedrock_response(event, 504, error_message=error_msg)
+        current_token = get_fitcloud_token()
     except Exception as e:
-        error_msg = f"시스템 내부 오류가 발생했습니다: {type(e).__name__} - {str(e)}"
-        print(f"[ERROR] {error_msg}")
-        return create_bedrock_response(event, 500, error_message=error_msg)
+        return create_bedrock_response(event, 401, error_message=f"FitCloud API 인증 실패: {str(e)}")
+    session = create_retry_session()
+    headers = {
+        'Authorization': f'Bearer {current_token}',
+        'User-Agent': 'FitCloud-Lambda/1.0'
+    }
+
+    # 6. 실제 API 호출 및 응답 포맷 통합
+    try:
+        if target_api_path == '/accounts':
+            response = session.post(f'{FITCLOUD_BASE_URL}/accounts', headers=headers, timeout=30)
+            raw_data = response.json()
+            processed_data_wrapper = process_fitcloud_response(raw_data, '/accounts')
+            return create_bedrock_response(event, 200, processed_data_wrapper)
+
+        elif target_api_path.startswith('/costs/ondemand/'):
+            # 비용(costs) API
+            api_data = {}
+            if 'from' in params: api_data['from'] = params['from']
+            if 'to' in params: api_data['to'] = params['to']
+            if 'accountId' in params: api_data['accountId'] = params['accountId']
+            if 'billingPeriod' in params: api_data['billingPeriod'] = params['billingPeriod']
+            response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, data=api_data, timeout=30)
+            raw_data = response.json()
+            processed_data_wrapper = process_fitcloud_response(raw_data, target_api_path)
+            return create_bedrock_response(event, 200, processed_data_wrapper)
+
+        elif target_api_path.startswith('/invoice/'):
+            # 청구서(invoce) API
+            api_data = {'billingPeriod': params['billingPeriod']}
+            if 'accountId' in params:
+                api_data['accountId'] = params['accountId']
+            response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepare_form_data(api_data), timeout=30)
+            raw_data = response.json()
+            processed_data_wrapper = process_invoice_response(raw_data, params['billingPeriod'], params.get('accountId'))
+            return create_bedrock_response(event, 200, processed_data_wrapper)
+
+        elif target_api_path.startswith('/usage/ondemand/'):
+            # 순수 usage API
+            if api_type == 'usage_tag':
+                api_data = {'beginDate': params['beginDate'], 'endDate': params['endDate']}
+                response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepare_form_data(api_data), timeout=60)
+                raw_data = response.json()
+                processed_data_wrapper = process_usage_response(raw_data, params['beginDate'], params['endDate'], is_tag=True)
+            elif api_type == 'usage_daily':
+                api_data = {'from': params['from'], 'to': params['to']}
+                response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepare_form_data(api_data), timeout=60)
+                raw_data = response.json()
+                processed_data_wrapper = process_usage_response(raw_data, params['from'], params['to'], is_daily=True)
+            else:
+                api_data = {'from': params['from'], 'to': params['to']}
+                response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepare_form_data(api_data), timeout=60)
+                raw_data = response.json()
+                processed_data_wrapper = process_usage_response(raw_data, params['from'], params['to'])
+            return create_bedrock_response(event, 200, processed_data_wrapper)
+
+        else:
+            return create_bedrock_response(event, 404, error_message=f"지원하지 않는 API 경로: {target_api_path}")
+
+    except Exception as e:
+        print(f"[ERROR] API 처리 중 예외: {e}")
+        return create_bedrock_response(event, 500, error_message=f"API 처리 중 오류: {str(e)}")
