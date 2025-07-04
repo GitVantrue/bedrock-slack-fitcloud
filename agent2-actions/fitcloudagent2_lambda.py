@@ -437,19 +437,19 @@ def lambda_handler(event, context):
         params = extract_parameters(event)
         print(f"📝 파라미터: {params}")
         
-        # billingPeriod를 from/to로 변환
-        if 'billingPeriod' in params and not ('from' in params and 'to' in params):
+        # usage API에서만 billingPeriod → from/to 변환
+        if api_path_from_event.startswith('/usage/ondemand') and 'billingPeriod' in params and not ('from' in params and 'to' in params):
             billing_period = str(params['billingPeriod'])
             if len(billing_period) == 6:
                 params['from'] = billing_period
                 params['to'] = billing_period
-                print(f"🔄 billingPeriod 변환: {billing_period} → from/to")
+                print(f"🔄 billingPeriod 변환: {billing_period} → from/to (usage API용)")
+        # invoice API에서는 billingPeriod만 사용, 변환하지 않음
         
         # ✨ 날짜 검증 로직 적용 ✨
         date_warnings = validate_date_logic(params, api_path_from_event)
         if date_warnings:
             print(f"DEBUG: 날짜 유효성 검증 경고: {date_warnings}")
-            # 400 Bad Request로 응답하여 Agent가 재요청하거나 사용자에게 알리도록 함
             return create_bedrock_response(
                 event, 400, 
                 error_message=f"날짜 오류: {'; '.join(date_warnings)}. 유효한 날짜 또는 기간을 입력해주세요."

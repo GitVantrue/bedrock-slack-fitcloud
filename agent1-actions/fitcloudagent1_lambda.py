@@ -591,21 +591,45 @@ def lambda_handler(event, context):
 
         # 날짜 보정
         params = smart_date_correction(params)
-        
-        # billingPeriod를 from/to로 변환 (비용 API용)
-        if 'billingPeriod' in params and not ('from' in params and 'to' in params):
-            # API 경로를 미리 확인하여 비용 API인 경우에만 변환
-            temp_api_path = determine_api_path(params)
-            if temp_api_path.startswith('/costs/ondemand/'):
+
+        # 사용자 의도 파악 (지침서 기준)
+        input_text = event.get('inputText', '').lower()
+        is_invoice_request = any(k in input_text for k in ['청구서', 'invoice', '인보이스', '최종 청구 금액', '실제 결제 금액', '실제 지불 금액'])
+        is_usage_request = any(k in input_text for k in ['순수 온디맨드', '순수 사용량', '할인 미적용', 'ri/sp 제외', '원가 기준', '할인 금액이 포함되지 않은', '할인 전 금액', '정가 기준', 'pure usage'])
+        has_account = any(k in input_text for k in ['계정', 'account', '개발계정', 'dev'])
+        print(f"🔍 사용자 의도 분석: is_invoice={is_invoice_request}, is_usage={is_usage_request}, has_account={has_account}")
+
+        # 1. 청구서/인보이스 요청이면 람다2로 위임
+        if is_invoice_request:
+            if has_account:
+                target_api_path = '/invoice/account/monthly'
+            else:
+                target_api_path = '/invoice/corp/monthly'
+            print(f"DEBUG: 청구서 요청 → {target_api_path}")
+            # 람다2로 위임 (기존 로직 유지)
+        # 2. 순수 온디맨드/순수 사용량/할인 미적용 요청이면 람다2로 위임
+        elif is_usage_request:
+            if has_account:
+                target_api_path = '/usage/ondemand/account/monthly'
+            else:
+                target_api_path = '/usage/ondemand/corp/monthly'
+            print(f"DEBUG: 순수 사용량 요청 → {target_api_path}")
+            # 람다2로 위임 (기존 로직 유지)
+        # 3. 그 외는 costs API(람다1)에서 직접 처리
+        else:
+            if has_account:
+                target_api_path = '/costs/ondemand/account/monthly'
+            else:
+                target_api_path = '/costs/ondemand/corp/monthly'
+            print(f"DEBUG: 일반 비용/사용량 요청 → {target_api_path}")
+            # costs API에서만 billingPeriod → from/to 변환
+            if 'billingPeriod' in params and not ('from' in params and 'to' in params):
                 billing_period = str(params['billingPeriod'])
                 if len(billing_period) == 6:
                     params['from'] = billing_period
                     params['to'] = billing_period
                     print(f"🔄 billingPeriod 변환: {billing_period} → from/to (비용 API용)")
-        
-        # API 경로 결정
-        target_api_path = determine_api_path(params)
-        
+
         # 날짜 검증
         date_warnings = validate_date_logic(params, target_api_path)
         if date_warnings:
@@ -614,91 +638,7 @@ def lambda_handler(event, context):
                 error_message=f"날짜 오류: {'; '.join(date_warnings)}. 유효한 날짜 또는 기간을 입력해주세요."
             )
 
-        # billingPeriod 자동 생성
-        if (api_path_from_event in ['/costs/ondemand/account/monthly', '/costs/ondemand/corp/monthly']) and not params.get('billingPeriod'):
-            if params.get('from') and len(str(params['from'])) >= 6:
-                params['billingPeriod'] = str(params['from'])[:6]
-        if (api_path_from_event in ['/costs/ondemand/account/daily', '/costs/ondemand/corp/daily']) and not params.get('billingPeriodDaily'):
-            if params.get('from') and len(str(params['from'])) == 8:
-                params['billingPeriodDaily'] = str(params['from'])
-
-        # 사용자 의도 파악
-        input_text = event.get('inputText', '').lower()
-        user_intent = {
-            'is_cost_request': any(keyword in input_text for keyword in ['사용요금', '비용', 'cost', '요금']),
-            'is_invoice_request': any(keyword in input_text for keyword in ['청구서', 'invoice', '청구']),
-            'is_usage_request': any(keyword in input_text for keyword in ['순수 사용량', '순수사용량', 'pure usage']),
-            'has_account': any(keyword in input_text for keyword in ['계정', 'account', '개발계정', 'dev']),
-            'is_monthly': any(keyword in input_text for keyword in ['월별', '월', 'monthly']),
-            'is_daily': any(keyword in input_text for keyword in ['일별', '일', 'daily'])
-        }
-        
-        print(f"🔍 사용자 의도 분석: {user_intent}")
-        print(f"🔍 입력 텍스트: {input_text}")
-        print(f"🔍 Agent 요청 경로: {api_path_from_event}")
-        
-        # 1. 계정 목록 조회는 그대로 처리
-        if api_path_from_event == '/accounts':
-            target_api_path = '/accounts'
-            
-        # 2. 계정 정보가 필요한 경우 먼저 계정 목록 조회
-        elif target_api_path and 'account' in target_api_path and not params.get('accountId'):
-            print("🔍 계정 정보가 필요하지만 accountId가 없음. 계정 목록을 먼저 조회합니다.")
-            target_api_path = '/accounts'
-            
-        # 2. 비용 관련 API는 그대로 처리
-        elif api_path_from_event.startswith('/costs/ondemand/'):
-            target_api_path = determine_api_path(params)
-            print(f"DEBUG: 비용 API 경로 동적 결정: {api_path_from_event} -> {target_api_path}")
-            
-        # 3. Agent가 잘못된 경로를 호출한 경우 사용자 의도에 따라 수정
-        elif api_path_from_event.startswith('/invoice/'):
-            if user_intent['is_cost_request']:
-                # 사용요금 요청인데 청구서 API를 호출한 경우 → 비용 API로 변경
-                print(f"⚠️ Agent가 청구서 API를 호출했지만 사용요금 요청으로 판단 → 비용 API로 변경")
-                target_api_path = determine_api_path(params)
-                print(f"DEBUG: 청구서 → 비용 API 경로 변경: {api_path_from_event} -> {target_api_path}")
-            else:
-                # 실제 청구서 요청인 경우 그대로 처리
-                target_api_path = api_path_from_event
-                print(f"DEBUG: 청구서 API 경로: {api_path_from_event}")
-                
-        elif api_path_from_event.startswith('/usage/'):
-            if user_intent['is_cost_request']:
-                # 사용요금 요청인데 사용량 API를 호출한 경우 → 비용 API로 변경
-                print(f"⚠️ Agent가 사용량 API를 호출했지만 사용요금 요청으로 판단 → 비용 API로 변경")
-                target_api_path = determine_api_path(params)
-                print(f"DEBUG: 사용량 → 비용 API 경로 변경: {api_path_from_event} -> {target_api_path}")
-            else:
-                # 실제 순수 사용량 요청인 경우 그대로 처리
-                target_api_path = api_path_from_event
-                print(f"DEBUG: 사용량 API 경로: {api_path_from_event}")
-                
-        # 4. 기타 경로의 경우 사용자 의도에 따라 결정
-        else:
-            if user_intent['is_usage_request']:
-                # 순수 사용량 요청이면 람다2의 usage API로 전달
-                if user_intent['has_account']:
-                    target_api_path = '/usage/ondemand/account/monthly'
-                else:
-                    target_api_path = '/usage/ondemand/corp/monthly'
-                print(f"DEBUG: 순수 사용량 요청 감지 → {target_api_path}")
-            elif user_intent['is_invoice_request']:
-                # 청구서 요청이면 람다2의 invoice API로 전달
-                if user_intent['has_account']:
-                    target_api_path = '/invoice/account/monthly'
-                else:
-                    target_api_path = '/invoice/corp/monthly'
-                print(f"DEBUG: 청구서 요청 감지 → {target_api_path}")
-            else:
-                # 기본적으로는 비용(costs) API로 처리
-                # 계정 정보가 있으면 계정 API로, 없으면 법인 API로
-                if user_intent['has_account']:
-                    target_api_path = '/costs/ondemand/account/monthly'
-                else:
-                    target_api_path = '/costs/ondemand/corp/monthly'
-                print(f"DEBUG: 기본 비용 API 경로 결정: {target_api_path}")
-
+        # 이하 기존 API 호출 분기 및 응답 처리 로직은 target_api_path 기준으로 그대로 유지
         # 토큰 획득
         try:
             current_token = get_fitcloud_token()
