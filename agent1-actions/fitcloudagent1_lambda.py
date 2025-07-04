@@ -468,6 +468,12 @@ def create_bedrock_response(event, status_code=200, response_data=None, error_me
         "sessionAttributes": session_attributes
     }
 
+def safe_float(val, default=0.0):
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return default
+
 def process_invoice_response(raw_data, billing_period, account_id=None):
     # 람다2의 invoice 응답 포맷을 참고하여 통합
     header = raw_data.get('header', {})
@@ -483,6 +489,8 @@ def process_invoice_response(raw_data, billing_period, account_id=None):
     total_invoice_fee_usd = 0.0
     for item in body:
         fee_usd = safe_float(item.get("usageFee", 0.0))
+        if fee_usd == 0.0:
+            continue  # 0원 데이터는 포함하지 않음
         invoice_items.append({
             "serviceName": item.get("invoiceItem", item.get("serviceName", "알 수 없음")),
             "usageFeeUSD": round(fee_usd, 2),
@@ -515,6 +523,8 @@ def process_usage_response(raw_data, from_period, to_period, is_daily=False, is_
         try:
             usage_amount = safe_float(item.get("usageAmount", 0.0))
             on_demand_cost = safe_float(item.get("onDemandCost", 0.0))
+            if on_demand_cost == 0.0:
+                continue  # 0원 데이터는 포함하지 않음
             parsed_tags_json = {}
             if 'tagsJson' in item and isinstance(item['tagsJson'], str):
                 try:
