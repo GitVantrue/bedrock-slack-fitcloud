@@ -470,6 +470,10 @@ def create_bedrock_response(event, status_code=200, response_data=None, error_me
                 final_data["count"] = response_data["count"]
             
 
+    # 최종 message 필드 로그로 남기기
+    if "message" in final_data:
+        print(f"[RESPONSE][message] {final_data['message']}")
+
     return {
         "messageVersion": "1.0",
         "response": {
