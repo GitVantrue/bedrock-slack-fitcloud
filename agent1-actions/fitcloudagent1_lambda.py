@@ -578,15 +578,35 @@ def lambda_handler(event, context):
     print(f"🚀 Lambda 1 시작: {event.get('apiPath', 'N/A')}")
     print(f"[DEBUG] Raw event: {json.dumps(event, ensure_ascii=False)[:1000]}")  # 이벤트 전체(1000자 제한) 로그
 
+    api_path_from_event = event.get('apiPath')
+    if api_path_from_event == '/accounts':
+        # 계정 목록 조회는 파라미터/날짜/계정 검증 없이 바로 호출
+        try:
+            current_token = get_fitcloud_token()
+            print("[DEBUG] FitCloud API 토큰 획득 성공 (/accounts)")
+            session = create_retry_session()
+            headers = {
+                'Authorization': f'Bearer {current_token}',
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'User-Agent': 'FitCloud-Lambda/1.0'
+            }
+            print("[DEBUG] /accounts API 호출")
+            response = session.post(f'{FITCLOUD_BASE_URL}/accounts', headers=headers, timeout=30)
+            response.raise_for_status()
+            raw_data = response.json()
+            print(f"[DEBUG] /accounts API 응답: {json.dumps(raw_data, ensure_ascii=False)[:1000]}")
+            processed_data_wrapper = process_fitcloud_response(raw_data, '/accounts')
+            print(f"[DEBUG] /accounts 최종 응답 데이터: {processed_data_wrapper}")
+            return create_bedrock_response(event, 200, processed_data_wrapper)
+        except Exception as e:
+            error_msg = f"계정 목록 조회 중 오류: {type(e).__name__} - {str(e)}"
+            print(f"[ERROR] {error_msg}")
+            return create_bedrock_response(event, 500, error_message=error_msg)
+
     try:
         if 'messageVersion' not in event or 'actionGroup' not in event:
             print("[ERROR] Bedrock Agent에서 온 이벤트 포맷 오류")
             return create_bedrock_response(event, 400, error_message="Invalid event format from Bedrock Agent.")
-
-        api_path_from_event = event.get('apiPath')
-        if not api_path_from_event:
-            print("[ERROR] API path missing in event payload.")
-            return create_bedrock_response(event, 400, error_message="API path missing in event payload.")
 
         # 파라미터 추출
         params = extract_parameters(event)
