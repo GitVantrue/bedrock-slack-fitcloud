@@ -329,6 +329,161 @@ def extract_parameters(event):
     return params
 
 # 안전한 float 변환 함수 추가
+def validate_date_logic(params, api_path=None):
+    """
+    보정된 날짜의 논리적 타당성을 검증합니다.
+    API 경로에 따라 필요한 파라미터를 정확히 검증합니다.
+    """
+    current_info = get_current_date_info()
+    current_date_only = current_info['current_datetime'].date() 
+
+    warnings = []
+    
+    # API 경로별 필수 파라미터 정의
+    api_requirements = {
+        # 람다1 (슈퍼바이저) - 비용 조회 API
+        '/costs/ondemand/corp/monthly': {'required': ['from', 'to'], 'format': 'YYYYMM'},
+        '/costs/ondemand/account/monthly': {'required': ['from', 'to', 'accountId'], 'format': 'YYYYMM'},
+        '/costs/ondemand/corp/daily': {'required': ['from', 'to'], 'format': 'YYYYMMDD'},
+        '/costs/ondemand/account/daily': {'required': ['from', 'to', 'accountId'], 'format': 'YYYYMMDD'},
+        
+        # 람다2 (에이전트2) - 청구서/사용량 API
+        '/invoice/corp/monthly': {'required': ['billingPeriod'], 'format': 'YYYYMM'},
+        '/invoice/account/monthly': {'required': ['billingPeriod'], 'format': 'YYYYMM'},
+        '/usage/ondemand/monthly': {'required': ['from', 'to'], 'format': 'YYYYMM'},
+        '/usage/ondemand/daily': {'required': ['from', 'to'], 'format': 'YYYYMMDD'},
+        '/usage/ondemand/tags': {'required': ['beginDate', 'endDate'], 'format': 'YYYYMMDD'},
+    }
+    
+    # API 경로가 지정된 경우 해당 API의 필수 파라미터 검증
+    if api_path and api_path in api_requirements:
+        requirements = api_requirements[api_path]
+        required_params = requirements['required']
+        expected_format = requirements['format']
+        
+        # 필수 파라미터 존재 여부 확인
+        missing_params = []
+        for param in required_params:
+            if param not in params or not str(params[param]).strip():
+                missing_params.append(param)
+        
+        if missing_params:
+            warnings.append(f"필수 파라미터가 누락되었습니다: {', '.join(missing_params)}")
+            return warnings
+        
+        # 파라미터 형식 검증
+        for param in required_params:
+            param_value = str(params[param])
+            if expected_format == 'YYYYMM' and not (len(param_value) == 6 and param_value.isdigit()):
+                warnings.append(f"'{param}' 파라미터는 YYYYMM 형식(6자리 숫자)이어야 합니다: {param_value}")
+            elif expected_format == 'YYYYMMDD' and not (len(param_value) == 8 and param_value.isdigit()):
+                warnings.append(f"'{param}' 파라미터는 YYYYMMDD 형식(8자리 숫자)이어야 합니다: {param_value}")
+    
+    # billingPeriod 검증 (청구서 API용)
+    if 'billingPeriod' in params:
+        billing_period = str(params['billingPeriod'])
+        if len(billing_period) == 6:  # YYYYMM 형식
+            try:
+                year = int(billing_period[:4])
+                month = int(billing_period[4:])
+                current_year = current_info['current_year']
+                current_month = current_info['current_month']
+                
+                # 현재 월보다 이후 월만 미래로 간주 (같은 연도의 과거 월은 허용)
+                is_future_month = (year > current_year) or \
+                                (year == current_year and month > current_month)
+                
+                if is_future_month:
+                    warnings.append(f"요청하신 월이 미래입니다: {billing_period} (현재: {current_year}{current_month:02d})")
+                    
+            except ValueError as e:
+                warnings.append(f"billingPeriod 파싱 오류: {e}. 유효한 월 형식(YYYYMM)을 입력해주세요.")
+    
+    # from/to 파라미터 검증 (비용/사용량 API용)
+    if 'from' in params and 'to' in params:
+        from_str = str(params['from'])
+        to_str = str(params['to'])
+        
+        try:
+            is_daily_format = False
+            from_dt_obj = None
+            to_dt_obj = None
+
+            if len(from_str) == 8 and len(to_str) == 8:  # YYYYMMDD 형식
+                from_dt_obj = datetime.strptime(from_str, '%Y%m%d').date()
+                to_dt_obj = datetime.strptime(to_str, '%Y%m%d').date()
+                is_daily_format = True
+            elif len(from_str) == 6 and len(to_str) == 6:  # YYYYMM 형식
+                from_dt_obj = datetime.strptime(from_str + '01', '%Y%m%d').date()
+                # to_dt_obj는 해당 월의 마지막 날짜로 설정하여 비교
+                next_month = (datetime.strptime(to_str + '01', '%Y%m%d').replace(day=1) + timedelta(days=32)).replace(day=1)
+                to_dt_obj = (next_month - timedelta(days=1)).date()
+            else:
+                warnings.append("날짜 형식이 올바르지 않습니다 (YYYYMM 또는 YYYYMMDD).")
+                return warnings
+            
+            # 조회 기간 시작일이 종료일보다 늦을 경우
+            if from_dt_obj > to_dt_obj:
+                warnings.append("조회 시작일이 종료일보다 늦습니다.")
+
+            # 미래 날짜/월 체크 (현재 날짜를 기준으로 판단)
+            if is_daily_format:
+                # 시작 날짜 또는 종료 날짜가 오늘보다 미래인 경우
+                if from_dt_obj > current_date_only or to_dt_obj > current_date_only:
+                    warnings.append(f"요청하신 날짜가 미래입니다: {from_str} - {to_str}")
+            else: # 월별
+                # 요청된 월의 연도와 월을 추출
+                req_from_year = int(from_str[:4])
+                req_from_month = int(from_str[4:])
+                req_to_year = int(to_str[:4])
+                req_to_month = int(to_str[4:])
+                
+                # 현재 연도와 월을 기준으로 미래인지 판단
+                current_year = current_info['current_year']
+                current_month = current_info['current_month']
+                
+                # 현재 월보다 이후 월만 미래로 간주 (같은 연도의 과거 월은 허용)
+                is_from_future_month = (req_from_year > current_year) or \
+                                     (req_from_year == current_year and req_from_month > current_month)
+                is_to_future_month = (req_to_year > current_year) or \
+                                   (req_to_year == current_year and req_to_month > current_month)
+                
+                # 미래 월인 경우에만 경고
+                if is_from_future_month or is_to_future_month:
+                    warnings.append(f"요청하신 월이 미래입니다: {from_str} - {to_str} (현재: {current_year}{current_month:02d})")
+                    
+        except ValueError as e:
+            warnings.append(f"날짜 파싱 오류: {e}. 유효한 날짜 형식을 입력해주세요.")
+    
+    # beginDate/endDate 파라미터 검증 (태그별 사용량 API용)
+    if 'beginDate' in params and 'endDate' in params:
+        begin_str = str(params['beginDate'])
+        end_str = str(params['endDate'])
+        
+        try:
+            if len(begin_str) == 8 and len(end_str) == 8:  # YYYYMMDD 형식
+                begin_dt_obj = datetime.strptime(begin_str, '%Y%m%d').date()
+                end_dt_obj = datetime.strptime(end_str, '%Y%m%d').date()
+                
+                # 조회 기간 시작일이 종료일보다 늦을 경우
+                if begin_dt_obj > end_dt_obj:
+                    warnings.append("조회 시작일이 종료일보다 늦습니다.")
+
+                # 시작 날짜 또는 종료 날짜가 오늘보다 미래인 경우
+                if begin_dt_obj > current_date_only or end_dt_obj > current_date_only:
+                    warnings.append(f"요청하신 날짜가 미래입니다: {begin_str} - {end_str}")
+            else:
+                warnings.append("날짜 형식이 올바르지 않습니다 (YYYYMMDD).")
+                return warnings
+                    
+        except ValueError as e:
+            warnings.append(f"날짜 파싱 오류: {e}. 유효한 날짜 형식을 입력해주세요.")
+
+    if warnings:
+        print(f"⚠️ 날짜 검증 경고: {warnings}")
+    
+    return warnings
+
 def safe_float(val):
     try:
         return float(val)
@@ -366,6 +521,18 @@ def lambda_handler(event, context):
 
         params = extract_parameters(event)
         print(f"📝 추출된 파라미터: {params}")
+        
+        # ✨ 날짜 검증 로직 적용 ✨
+        date_warnings = validate_date_logic(params, api_path_from_event)
+        if date_warnings:
+            print(f"DEBUG: 날짜 유효성 검증 경고: {date_warnings}")
+            # 400 Bad Request로 응답하여 Agent가 재요청하거나 사용자에게 알리도록 함
+            return create_bedrock_response(
+                event, 400, 
+                error_message=f"날짜 오류: {'; '.join(date_warnings)}. 유효한 날짜 또는 기간을 입력해주세요."
+            )
+        print(f"📝 최종 확인 파라미터: {params}")
+        # ✨ 날짜 검증 로직 적용 끝 ✨
         
         # 토큰 획득
         try:
@@ -418,16 +585,6 @@ def lambda_handler(event, context):
             billing_period = api_data['billingPeriod']
             if not (len(billing_period) == 6 and billing_period.isdigit()):
                 raise ValueError(f"billingPeriod 형식이 올바르지 않습니다: {billing_period}. YYYYMM 형식(예: {get_current_date_info()['current_month_str']})을 사용해주세요.")
-            # 미래 월 검증
-            current_info = get_current_date_info()
-            current_year = current_info['current_year']
-            current_month = current_info['current_month']
-            req_year = int(billing_period[:4])
-            req_month = int(billing_period[4:])
-            is_future_month = (req_year > current_year) or \
-                              (req_year == current_year and req_month > current_month)
-            if is_future_month:
-                raise ValueError(f"요청하신 청구월({billing_period})이 미래입니다. 현재 월({current_year}{current_month:02d}) 이전의 월을 입력해주세요.")
             prepared_data = prepare_form_data(api_data)
             log_api_request(target_api_path, api_data, headers)
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepared_data, timeout=30)
@@ -478,16 +635,6 @@ def lambda_handler(event, context):
                 raise ValueError(f"billingPeriod 형식이 올바르지 않습니다: {billing_period}. YYYYMM 형식(예: {get_current_date_info()['current_month_str']})을 사용해주세요.")
             if not (len(account_id) == 12 and account_id.isdigit()):
                 raise ValueError(f"accountId 형식이 올바르지 않습니다: {account_id}. 12자리 숫자를 입력해주세요.")
-            # 미래 월 검증
-            current_info = get_current_date_info()
-            current_year = current_info['current_year']
-            current_month = current_info['current_month']
-            req_year = int(billing_period[:4])
-            req_month = int(billing_period[4:])
-            is_future_month = (req_year > current_year) or \
-                              (req_year == current_year and req_month > current_month)
-            if is_future_month:
-                raise ValueError(f"요청하신 청구월({billing_period})이 미래입니다. 현재 월({current_year}{current_month:02d}) 이전의 월을 입력해주세요.")
             prepared_data = prepare_form_data(api_data)
             log_api_request(target_api_path, api_data, headers)
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepared_data, timeout=30)
@@ -543,22 +690,6 @@ def lambda_handler(event, context):
                 raise ValueError(f"시작 월 'from' 형식이 올바르지 않습니다: {from_period}. YYYYMM 형식(예: {get_current_date_info()['current_month_str']})을 사용해주세요.")
             if not (len(to_period) == 6 and to_period.isdigit()):
                 raise ValueError(f"종료 월 'to' 형식이 올바르지 않습니다: {to_period}. YYYYMM 형식(예: {get_current_date_info()['current_month_str']})을 사용해주세요.")
-            
-            # 날짜 범위 유효성 검증
-            try:
-                from_date_obj_month = datetime.strptime(from_period, '%Y%m').date()
-                to_date_obj_month = datetime.strptime(to_period, '%Y%m').date()
-                current_month_str_yyyymm = get_current_date_info()['current_month_str']
-                current_month_date_obj = datetime.strptime(current_month_str_yyyymm, '%Y%m').date()
-                
-                if from_date_obj_month > to_date_obj_month:
-                    raise ValueError(f"조회 시작 월({from_period})이 종료 월({to_period})보다 늦습니다.")
-
-                if from_date_obj_month > current_month_date_obj or to_date_obj_month > current_month_date_obj:
-                    raise ValueError(f"요청하신 조회 기간({from_period}-{to_period})이 미래입니다. 현재 월({current_month_str_yyyymm}) 이전의 월을 입력해주세요.")
-
-            except ValueError as e:
-                raise ValueError(f"날짜 범위 오류: {e}. 유효한 YYYYMM 기간을 입력해주세요.")
 
             prepared_data = prepare_form_data(api_data)
             
@@ -639,21 +770,6 @@ def lambda_handler(event, context):
                 raise ValueError(f"시작일 'from' 형식이 올바르지 않습니다: {from_date_str}. YYYYMMDD 형식(예: {get_current_date_info()['current_date_str']})을 사용해주세요.")
             if not (len(to_date_str) == 8 and to_date_str.isdigit()):
                 raise ValueError(f"종료일 'to' 형식이 올바르지 않습니다: {to_date_str}. YYYYMMDD 형식(예: {get_current_date_info()['current_date_str']})을 사용해주세요.")
-            
-            # 날짜 범위 유효성 검증
-            try:
-                from_date_obj = datetime.strptime(from_date_str, '%Y%m%d').date()
-                to_date_obj = datetime.strptime(to_date_str, '%Y%m%d').date()
-                current_date_only = get_current_date_info()['current_datetime'].date()
-                
-                if from_date_obj > to_date_obj:
-                    raise ValueError(f"조회 시작일({from_date_str})이 종료일({to_date_str})보다 늦습니다.")
-
-                if from_date_obj > current_date_only or to_date_obj > current_date_only:
-                    raise ValueError(f"요청하신 조회 기간({from_date_str}-{to_date_str})이 미래입니다. 오늘({current_date_only.strftime('%Y%m%d')}) 이전의 날짜를 입력해주세요.")
-
-            except ValueError as e:
-                raise ValueError(f"날짜 범위 오류: {e}. 유효한 YYYYMMDD 기간을 입력해주세요.")
 
             prepared_data = prepare_form_data(api_data)
             
@@ -733,21 +849,6 @@ def lambda_handler(event, context):
                 raise ValueError(f"시작일 'beginDate' 형식이 올바르지 않습니다: {begin_date_str}. YYYYMMDD 형식(예: {get_current_date_info()['current_date_str']})을 사용해주세요.")
             if not (len(end_date_str) == 8 and end_date_str.isdigit()):
                 raise ValueError(f"종료일 'endDate' 형식이 올바르지 않습니다: {end_date_str}. YYYYMMDD 형식(예: {get_current_date_info()['current_date_str']})을 사용해주세요.")
-            
-            # 날짜 범위 유효성 검증 (일별 온디맨드 사용량과 동일)
-            try:
-                begin_date_obj = datetime.strptime(begin_date_str, '%Y%m%d').date()
-                end_date_obj = datetime.strptime(end_date_str, '%Y%m%d').date()
-                current_date_only = get_current_date_info()['current_datetime'].date() 
-                
-                if begin_date_obj > end_date_obj:
-                    raise ValueError(f"조회 시작일({begin_date_str})이 종료일({end_date_str})보다 늦습니다.")
-
-                if begin_date_obj > current_date_only or end_date_obj > current_date_only:
-                    raise ValueError(f"요청하신 조회 기간({begin_date_str}-{end_date_str})이 미래입니다. 오늘({current_date_only.strftime('%Y%m%d')}) 이전의 날짜를 입력해주세요.")
-
-            except ValueError as e:
-                raise ValueError(f"날짜 범위 오류: {e}. 유효한 YYYYMMDD 기간을 입력해주세요.")
 
             prepared_data = prepare_form_data(api_data)
             
