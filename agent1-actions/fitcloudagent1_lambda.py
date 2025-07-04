@@ -646,7 +646,11 @@ def summarize_cost_items_table(cost_items, month_str, account_names=None, is_dai
             total = date_total[date]
             top_services = sorted(date_service_sum[date].items(), key=lambda x: abs(x[1]), reverse=True)[:8]
             etc = total - sum(x[1] for x in top_services)
-            msg += f"\n#### {date} 일별 온디맨드 사용금액 상위 8개 서비스\n"
+            # 날짜를 YYYY-MM-DD로 포맷
+            date_fmt = date
+            if len(date) == 8:
+                date_fmt = f"{date[:4]}-{date[4:6]}-{date[6:]}"
+            msg += f"\n#### {date_fmt} 일별 온디맨드 사용금액 상위 8개 서비스\n"
             msg += "| 서비스명 | 금액(USD) | 비율(%) |\n|---|---:|---:|\n"
             for name, val in top_services:
                 percent = val / total * 100 if total else 0
@@ -664,7 +668,14 @@ def summarize_cost_items_table(cost_items, month_str, account_names=None, is_dai
             service_sum[service] += val
         top_services = sorted(service_sum.items(), key=lambda x: abs(x[1]), reverse=True)[:10]
         etc = total - sum(x[1] for x in top_services)
-        msg = f"### {month_str} 온디맨드 사용금액 상위 10개 서비스\n"
+        # 월 정보가 YYYYMM 또는 YYYY-MM 형태면 YYYY년 MM월로 포맷
+        month_fmt = month_str
+        if len(month_str) == 6:
+            month_fmt = f"{month_str[:4]}년 {int(month_str[4:]):02d}월"
+        elif len(month_str) == 7 and '-' in month_str:
+            y, m = month_str.split('-')
+            month_fmt = f"{y}년 {int(m):02d}월"
+        msg = f"### {month_fmt} 온디맨드 사용금액 상위 10개 서비스\n"
         msg += "| 서비스명 | 금액(USD) | 비율(%) |\n|---|---:|---:|\n"
         for name, val in top_services:
             percent = val / total * 100 if total else 0
@@ -686,7 +697,14 @@ def summarize_invoice_items(invoice_items, billing_period):
         service_sum[service] += val
     top_services = sorted(service_sum.items(), key=lambda x: abs(x[1]), reverse=True)[:8]
     etc = total - sum(x[1] for x in top_services)
-    msg = f":bar_chart: **{billing_period[:4]}년 {int(billing_period[4:]):02d}월 청구 총액: ${total:,.2f}**\n"
+    # 월 정보가 YYYYMM 또는 YYYY-MM 형태면 YYYY년 MM월로 포맷
+    month_fmt = billing_period
+    if len(billing_period) == 6:
+        month_fmt = f"{billing_period[:4]}년 {int(billing_period[4:]):02d}월"
+    elif len(billing_period) == 7 and '-' in billing_period:
+        y, m = billing_period.split('-')
+        month_fmt = f"{y}년 {int(m):02d}월"
+    msg = f":bar_chart: **{month_fmt} 청구 총액: ${total:,.2f}**\n"
     msg += "**주요 서비스별 청구 금액:**\n"
     for name, val in top_services:
         percent = val / total * 100 if total else 0
@@ -797,21 +815,28 @@ def extract_parameters(event):
         session_current_month = real_current_month
         print(f"📅 세션 월 보정: {session_current_month} → {real_current_month}")
     
-    # inputText에서 월 정보 추출
+    # inputText에서 월/일 정보 추출
     input_text = event.get('inputText', '')
     import re
+    # 일자 범위(1~5일 등) 추출
+    day_range_match = re.search(r'([0-9]{1,2})[일\.]?\s*~\s*([0-9]{1,2})[일\.]?', input_text)
     month_match = re.search(r'([0-9]{1,2})월', input_text)
-    if month_match:
+    if month_match and day_range_match:
+        # ex: 5월 1~5일 → from: 20250501, to: 20250505
         month_str = month_match.group(1).zfill(2)
-        # API 경로에 따라 분기
+        from_day = day_range_match.group(1).zfill(2)
+        to_day = day_range_match.group(2).zfill(2)
+        params['from'] = f"{session_current_year}{month_str}{from_day}"
+        params['to'] = f"{session_current_year}{month_str}{to_day}"
+        print(f"📅 inputText에서 일자 범위 추출: from={params['from']}, to={params['to']}")
+    elif month_match:
+        month_str = month_match.group(1).zfill(2)
         api_path = event.get('apiPath', '')
         if api_path.startswith('/costs/ondemand/') or api_path.startswith('/usage/ondemand/'):
-            # 비용/순수 온디맨드 API는 from/to에 YYYYMM 세팅
             params['from'] = f"{session_current_year}{month_str}"
             params['to'] = f"{session_current_year}{month_str}"
             print(f"📅 inputText에서 월 추출(비용/온디맨드API): from={params['from']}, to={params['to']}")
         elif api_path.startswith('/invoice/'):
-            # 인보이스 API는 billingPeriod 세팅
             params['billingPeriod'] = f"{session_current_year}{month_str}"
             print(f"📅 inputText에서 월 추출(인보이스API): billingPeriod={params['billingPeriod']}")
     # 월만 입력된 경우 보정
@@ -860,6 +885,15 @@ def lambda_handler(event, context):
 
     input_text = event.get('inputText', '').lower()
     api_path_from_event = event.get('apiPath', '')
+
+    # 비용/온디맨드 API에서 from/to 길이에 따라 daily/monthly 분기
+    if api_path_from_event.startswith('/costs/ondemand/') or api_path_from_event.startswith('/usage/ondemand/'):
+        if 'from' in params and len(str(params['from'])) == 8:
+            api_path_from_event = api_path_from_event.replace('monthly', 'daily')
+            print(f"[DEBUG] from/to 8자리: daily API로 분기 → {api_path_from_event}")
+        elif 'from' in params and len(str(params['from'])) == 6:
+            api_path_from_event = api_path_from_event.replace('daily', 'monthly')
+            print(f"[DEBUG] from/to 6자리: monthly API로 분기 → {api_path_from_event}")
 
     # 2. 사용자 의도/지침서 기반 API 분기
     is_invoice_request = any(k in input_text for k in ['청구서', 'invoice', '인보이스', '최종 청구 금액', '실제 결제 금액', '실제 지불 금액'])
