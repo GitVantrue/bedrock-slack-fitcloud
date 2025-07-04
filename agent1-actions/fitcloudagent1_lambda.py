@@ -90,7 +90,8 @@ def smart_date_correction(params):
             year_part = original_value[:4]
             suffix_part = original_value[4:]
             try:
-                if int(year_part) < current_year and int(year_part) >= 2020:
+                # 현재 연도보다 5년 이상 과거인 경우에만 연도 보정
+                if int(year_part) < current_year - 5 and int(year_part) >= 2020:
                     corrected_value = str(current_year) + suffix_part
                     if len(corrected_value) == 8:
                         datetime.strptime(corrected_value, '%Y%m%d')
@@ -590,13 +591,16 @@ def lambda_handler(event, context):
         # 날짜 보정
         params = smart_date_correction(params)
         
-        # billingPeriod를 from/to로 변환
+        # billingPeriod를 from/to로 변환 (비용 API용)
         if 'billingPeriod' in params and not ('from' in params and 'to' in params):
-            billing_period = str(params['billingPeriod'])
-            if len(billing_period) == 6:
-                params['from'] = billing_period
-                params['to'] = billing_period
-                print(f"🔄 billingPeriod 변환: {billing_period} → from/to")
+            # API 경로를 미리 확인하여 비용 API인 경우에만 변환
+            temp_api_path = determine_api_path(params)
+            if temp_api_path.startswith('/costs/ondemand/'):
+                billing_period = str(params['billingPeriod'])
+                if len(billing_period) == 6:
+                    params['from'] = billing_period
+                    params['to'] = billing_period
+                    print(f"🔄 billingPeriod 변환: {billing_period} → from/to (비용 API용)")
         
         # API 경로 결정
         target_api_path = determine_api_path(params)
