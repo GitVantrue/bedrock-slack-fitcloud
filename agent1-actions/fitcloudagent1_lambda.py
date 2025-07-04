@@ -592,29 +592,70 @@ def lambda_handler(event, context):
 
         # API 경로 결정 (모든 FitCloud API 경로 지원)
         target_api_path = None
+        
+        # 사용자 의도 파악을 위한 키워드 분석
+        input_text = event.get('inputText', '').lower()
+        user_intent = {
+            'is_cost_request': any(keyword in input_text for keyword in ['사용요금', '비용', 'cost', '요금']),
+            'is_invoice_request': any(keyword in input_text for keyword in ['청구서', 'invoice', '청구']),
+            'is_usage_request': any(keyword in input_text for keyword in ['순수 사용량', '순수사용량', 'pure usage']),
+            'has_account': any(keyword in input_text for keyword in ['계정', 'account', '개발계정', 'dev']),
+            'is_monthly': any(keyword in input_text for keyword in ['월별', '월', 'monthly']),
+            'is_daily': any(keyword in input_text for keyword in ['일별', '일', 'daily'])
+        }
+        
+        print(f"🔍 사용자 의도 분석: {user_intent}")
+        print(f"🔍 입력 텍스트: {input_text}")
+        print(f"🔍 Agent 요청 경로: {api_path_from_event}")
+        
+        # 1. 계정 목록 조회는 그대로 처리
         if api_path_from_event == '/accounts':
             target_api_path = '/accounts'
+            
+        # 2. 비용 관련 API는 그대로 처리
         elif api_path_from_event.startswith('/costs/ondemand/'):
             target_api_path = determine_api_path(params)
             print(f"DEBUG: 비용 API 경로 동적 결정: {api_path_from_event} -> {target_api_path}")
+            
+        # 3. Agent가 잘못된 경로를 호출한 경우 사용자 의도에 따라 수정
         elif api_path_from_event.startswith('/invoice/'):
-            # 청구서 API는 람다2에서 처리하므로 그대로 전달
-            target_api_path = api_path_from_event
-            print(f"DEBUG: 청구서 API 경로: {api_path_from_event}")
+            if user_intent['is_cost_request']:
+                # 사용요금 요청인데 청구서 API를 호출한 경우 → 비용 API로 변경
+                print(f"⚠️ Agent가 청구서 API를 호출했지만 사용요금 요청으로 판단 → 비용 API로 변경")
+                target_api_path = determine_api_path(params)
+                print(f"DEBUG: 청구서 → 비용 API 경로 변경: {api_path_from_event} -> {target_api_path}")
+            else:
+                # 실제 청구서 요청인 경우 그대로 처리
+                target_api_path = api_path_from_event
+                print(f"DEBUG: 청구서 API 경로: {api_path_from_event}")
+                
         elif api_path_from_event.startswith('/usage/'):
-            # 사용량 API는 람다2에서 처리하므로 그대로 전달
-            target_api_path = api_path_from_event
-            print(f"DEBUG: 사용량 API 경로: {api_path_from_event}")
+            if user_intent['is_cost_request']:
+                # 사용요금 요청인데 사용량 API를 호출한 경우 → 비용 API로 변경
+                print(f"⚠️ Agent가 사용량 API를 호출했지만 사용요금 요청으로 판단 → 비용 API로 변경")
+                target_api_path = determine_api_path(params)
+                print(f"DEBUG: 사용량 → 비용 API 경로 변경: {api_path_from_event} -> {target_api_path}")
+            else:
+                # 실제 순수 사용량 요청인 경우 그대로 처리
+                target_api_path = api_path_from_event
+                print(f"DEBUG: 사용량 API 경로: {api_path_from_event}")
+                
+        # 4. 기타 경로의 경우 사용자 의도에 따라 결정
         else:
-            # 사용자가 명시적으로 "순수 사용량"을 요청했는지 확인
-            input_text = event.get('inputText', '').lower()
-            if '순수' in input_text and ('사용량' in input_text or 'usage' in input_text):
+            if user_intent['is_usage_request']:
                 # 순수 사용량 요청이면 람다2의 usage API로 전달
-                if 'account' in input_text or '계정' in input_text:
+                if user_intent['has_account']:
                     target_api_path = '/usage/ondemand/account/monthly'
                 else:
                     target_api_path = '/usage/ondemand/corp/monthly'
                 print(f"DEBUG: 순수 사용량 요청 감지 → {target_api_path}")
+            elif user_intent['is_invoice_request']:
+                # 청구서 요청이면 람다2의 invoice API로 전달
+                if user_intent['has_account']:
+                    target_api_path = '/invoice/account/monthly'
+                else:
+                    target_api_path = '/invoice/corp/monthly'
+                print(f"DEBUG: 청구서 요청 감지 → {target_api_path}")
             else:
                 # 기본적으로는 비용(costs) API로 처리
                 target_api_path = determine_api_path(params)
