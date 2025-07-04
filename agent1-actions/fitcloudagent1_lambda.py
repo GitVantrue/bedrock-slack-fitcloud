@@ -205,14 +205,20 @@ def validate_date_logic(params):
                 req_from_month = int(from_str[4:])
                 req_to_year = int(to_str[:4])
                 req_to_month = int(to_str[4:])
-                # 현재 연도와 월을 기준으로 미래인지 판단 (오늘이 속한 월보다 이후 월만 미래로 간주)
+                
+                # 현재 연도와 월을 기준으로 미래인지 판단
                 current_year = current_info['current_year']
                 current_month = current_info['current_month']
-                is_from_future_month = (req_from_year > current_year) or (req_from_year == current_year and req_from_month > current_month)
-                is_to_future_month = (req_to_year > current_year) or (req_to_year == current_year and req_to_month > current_month)
-                # 오늘이 속한 월(YYYYMM)까지는 미래로 간주하지 않음
+                
+                # 현재 월보다 이후 월만 미래로 간주 (같은 연도의 과거 월은 허용)
+                is_from_future_month = (req_from_year > current_year) or \
+                                     (req_from_year == current_year and req_from_month > current_month)
+                is_to_future_month = (req_to_year > current_year) or \
+                                   (req_to_year == current_year and req_to_month > current_month)
+                
+                # 미래 월인 경우에만 경고
                 if is_from_future_month or is_to_future_month:
-                    warnings.append(f"요청하신 월이 미래입니다: {from_str} - {to_str}")
+                    warnings.append(f"요청하신 월이 미래입니다: {from_str} - {to_str} (현재: {current_year}{current_month:02d})")
                     
         except ValueError as e:
             warnings.append(f"날짜 파싱 오류: {e}. 유효한 날짜 형식을 입력해주세요.")
