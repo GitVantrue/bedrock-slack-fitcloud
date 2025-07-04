@@ -671,6 +671,16 @@ def lambda_handler(event, context):
     print(f"[DEBUG] 추출된 파라미터: {params}")
     params = smart_date_correction(params)
     print(f"[DEBUG] 보정된 파라미터: {params}")
+
+    # billingPeriod가 있으면 from/to 제거 (중복 방지)
+    if 'billingPeriod' in params:
+        if 'from' in params:
+            print(f"[DEBUG] billingPeriod 우선 적용: from({params['from']}) 제거")
+            params.pop('from')
+        if 'to' in params:
+            print(f"[DEBUG] billingPeriod 우선 적용: to({params['to']}) 제거")
+            params.pop('to')
+
     input_text = event.get('inputText', '').lower()
     api_path_from_event = event.get('apiPath', '')
 
@@ -750,10 +760,12 @@ def lambda_handler(event, context):
 
         elif target_api_path.startswith('/costs/ondemand/'):
             api_data = {}
-            if 'from' in params: api_data['from'] = params['from']
-            if 'to' in params: api_data['to'] = params['to']
+            if 'billingPeriod' in params:
+                api_data['billingPeriod'] = params['billingPeriod']
+            else:
+                if 'from' in params: api_data['from'] = params['from']
+                if 'to' in params: api_data['to'] = params['to']
             if 'accountId' in params: api_data['accountId'] = params['accountId']
-            if 'billingPeriod' in params: api_data['billingPeriod'] = params['billingPeriod']
             url = f'{FITCLOUD_BASE_URL}{target_api_path}'
             print(f"[REQUEST] POST {url}")
             print(f"[REQUEST] headers: {headers}")
