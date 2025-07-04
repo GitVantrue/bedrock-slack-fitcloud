@@ -42,52 +42,21 @@ def prepare_form_data(data_dict):
 
 def get_current_date_info():
     """현재 날짜 정보를 반환합니다 (KST 기준)."""
-    # 디버깅을 위한 상세 로깅 추가
-    import os
-    
-    print(f"🔍 시간대 디버깅 정보:")
-    print(f"  - 시스템 TZ 환경변수: {os.environ.get('TZ', '설정되지 않음')}")
-    print(f"  - UTC 시간: {datetime.utcnow()}")
-    print(f"  - 로컬 시간 (시스템): {datetime.now()}")
-    
-    # 여러 방법으로 KST 시간 계산 (일관성 확인)
     utc_now = datetime.utcnow()
     tz = pytz.timezone('Asia/Seoul')
-    
-    # 방법 1: UTC 기반 변환
     utc_with_tz = pytz.utc.localize(utc_now)
-    now_method1 = utc_with_tz.astimezone(tz)
-    
-    # 방법 2: 직접 KST 계산
-    now_method2 = datetime.now(tz)
-    
-    # 방법 3: 수동 KST 계산 (UTC + 9시간)
-    kst_offset = timedelta(hours=9)
-    now_method3 = utc_now + kst_offset
-    
-    print(f"  - 방법 1 (UTC→KST 변환): {now_method1}")
-    print(f"  - 방법 2 (직접 KST): {now_method2}")
-    print(f"  - 방법 3 (수동 +9시간): {now_method3}")
-    
-    # 가장 안정적인 방법 선택 (방법 1)
-    now = now_method1
-    
-    # 일관성 검증
-    if now_method1.date() != now_method2.date():
-        print(f"⚠️ 경고: 시간대 계산 방법 간 차이 발견!")
-        print(f"  - 방법 1: {now_method1.date()}")
-        print(f"  - 방법 2: {now_method2.date()}")
+    now = utc_with_tz.astimezone(tz)
     
     current_info = {
         'current_year': now.year,
         'current_month': now.month,
         'current_day': now.day,
-        'current_datetime': now, # 시간대 정보 포함된 datetime 객체
-        'current_date_str': now.strftime('%Y%m%d'),  # YYYYMMDD 형식
-        'current_month_str': now.strftime('%Y%m'),   # YYYYMM 형식
+        'current_datetime': now,
+        'current_date_str': now.strftime('%Y%m%d'),
+        'current_month_str': now.strftime('%Y%m'),
         'timezone': str(now.tzinfo),
-        'utc_time': utc_now.isoformat(),  # UTC 시간도 포함
-        'kst_time': now.isoformat()       # KST 시간도 포함
+        'utc_time': utc_now.isoformat(),
+        'kst_time': now.isoformat()
     }
     
     print(f"🕐 최종 현재 시간 정보:")
@@ -215,139 +184,102 @@ def extract_parameters(event):
     params = {}
     session_current_year = None
     available_accounts = []
-    print(f"🔍 파라미터 추출 시작:")
     
-    # 세션 속성에서 날짜 정보와 계정 정보 가져오기 (Agent가 전달했다면)
+    # 세션 속성에서 날짜 정보와 계정 정보 가져오기
     if 'sessionAttributes' in event:
         session_attrs = event['sessionAttributes']
         if 'current_year' in session_attrs:
             session_current_year = str(session_attrs['current_year'])
-            print(f"DEBUG: Session Attributes에서 current_year 감지: {session_current_year}")
         
         # 계정 정보 가져오기
         if 'available_accounts' in session_attrs:
             try:
                 available_accounts = json.loads(session_attrs['available_accounts'])
-                print(f"DEBUG: Session Attributes에서 available_accounts 감지: {len(available_accounts)}개 계정")
-                for account in available_accounts:
-                    print(f"  - {account.get('accountName', 'N/A')}: {account.get('accountId', 'N/A')}")
-            except json.JSONDecodeError as e:
-                print(f"⚠️ available_accounts JSON 파싱 실패: {e}")
+            except json.JSONDecodeError:
                 available_accounts = []
     
     # Query Parameters (GET 요청 시)
     if 'parameters' in event and event['parameters']:
-        print(f"  - Query Parameters 발견: {len(event['parameters'])}개")
         for param in event['parameters']:
             param_name = param.get('name')
             param_value = param.get('value')
             if param_name and param_value is not None:
                 params[param_name] = param_value
-                print(f"    * {param_name}: '{param_value}'")
     
     # Request Body Parameters (POST 요청 시)
     if 'requestBody' in event and 'content' in event['requestBody']:
         content = event['requestBody']['content']
-        print(f"  - Request Body 발견")
         
         if 'application/x-www-form-urlencoded' in content:
-            print(f"    * Content-Type: application/x-www-form-urlencoded")
-            # 기존 body 필드 대신 properties 리스트에서 파라미터 추출
             properties = content['application/x-www-form-urlencoded'].get('properties')
             if properties:
-                print(f"    * Properties 리스트에서 파라미터 추출 시작: {len(properties)}개 항목")
                 for prop in properties:
                     name = prop.get('name')
                     value = prop.get('value')
                     if name and value is not None:
                         params[name] = value
-                        print(f"      - {name}: '{value}'")
             else:
-                # 기존 body 로직도 만약을 위해 유지 (다만 현재 케이스에서는 사용되지 않을 것)
                 body_str = content['application/x-www-form-urlencoded'].get('body')
                 if body_str:
-                    print(f"    * Raw body_str for x-www-form-urlencoded (fallback): '{body_str}'") 
-                    print(f"    * Body 내용 (fallback): '{body_str[:100]}...' (길이: {len(body_str)})")
                     parsed_body = parse_qs(body_str)
                     for key, value_list in parsed_body.items():
                         if value_list:
                             params[key] = value_list[0]
-                            print(f"      - {key}: '{value_list[0]}'")
         
         elif 'application/json' in content:
-            print(f"    * Content-Type: application/json")
             body_str = content['application/json'].get('body')
             if body_str:
-                print(f"    * JSON Body 내용: '{body_str[:100]}...' (길이: {len(body_str)})")
                 try:
                     json_body = json.loads(body_str)
                     params.update(json_body)
-                    for key, value in json_body.items():
-                        print(f"      - {key}: '{value}'")
-                except json.JSONDecodeError as e:
-                    print(f"    * ❌ JSON body 파싱 실패: {e}")
-                    print(f"    * 원본 body: '{body_str}'")
+                except json.JSONDecodeError:
+                    pass
     
-    print(f"🔍 파라미터 추출 완료: {len(params)}개 파라미터")
-    for key, value in params.items():
-        print(f"  - {key}: '{value}' (타입: {type(value).__name__})")
-    
-    # 월만 입력된 경우 보정 (session_current_year 우선 적용)
+    # 월만 입력된 경우 보정
     for k, v in list(params.items()):
         if k in ['from', 'to', 'billingPeriod', 'beginDate', 'endDate']:
             v_str = str(v)
-            # MMDD 형태(4자리)일 때 연도 보정 (agent1 smart_date_correction 참고)
+            # MMDD 형태(4자리)일 때 연도 보정
             if len(v_str) == 4 and v_str.isdigit() and session_current_year:
                 try:
                     test_date_str = f"{session_current_year}{v_str}"
-                    datetime.strptime(test_date_str, '%Y%m%d')  # 유효성 체크
+                    datetime.strptime(test_date_str, '%Y%m%d')
                     params[k] = test_date_str
-                    print(f"[extract_parameters] MMDD만 입력된 {k} → {params[k]} (sessionAttributes.current_year 적용)")
+                    print(f"📅 MMDD 보정: {k}={v} → {params[k]}")
                     continue
                 except ValueError:
-                    print(f"⚠️ {k} '{v_str}'는 유효한 MMDD 형식이 아니거나 연도 추가 후 유효하지 않음.")
+                    pass
             # 월만 입력된 경우 (1~2자리)
             if (len(v_str) == 1 or (len(v_str) == 2 and v_str.isdigit())) and session_current_year:
                 params[k] = f"{session_current_year}{v_str.zfill(2)}"
-                print(f"[extract_parameters] 월만 입력된 {k} → {params[k]} (sessionAttributes.current_year 적용)")
+                print(f"📅 월 보정: {k}={v} → {params[k]}")
     
-    # 계정명으로 계정ID 찾기 (sessionAttributes의 available_accounts 활용)
+    # 계정명으로 계정ID 찾기
     if available_accounts and 'accountName' in params and not 'accountId' in params:
         account_name = str(params['accountName']).strip()
-        print(f"🔍 계정명 '{account_name}'으로 계정ID 찾는 중...")
         
         for account in available_accounts:
             if account.get('accountName', '').strip().lower() == account_name.lower():
                 found_account_id = account.get('accountId')
                 params['accountId'] = found_account_id
-                print(f"✅ 계정명 '{account_name}' → 계정ID '{found_account_id}' 매칭 성공")
+                print(f"🔍 계정명 매칭: {account_name} → {found_account_id}")
                 break
-        else:
-            print(f"⚠️ 계정명 '{account_name}'에 해당하는 계정ID를 찾을 수 없습니다.")
-            print(f"  사용 가능한 계정: {[acc.get('accountName') for acc in available_accounts]}")
     
     return params
 
 # 안전한 float 변환 함수 추가
 def validate_date_logic(params, api_path=None):
     """
-    보정된 날짜의 논리적 타당성을 검증합니다.
-    API 경로에 따라 필요한 파라미터를 정확히 검증합니다.
+    API 경로별로 필수 파라미터와 날짜 형식을 검증합니다.
     """
-    current_info = get_current_date_info()
-    current_date_only = current_info['current_datetime'].date() 
-
     warnings = []
+    current_info = get_current_date_info()
+    current_date_only = current_info['current_datetime'].date()
     
-    # API 경로별 필수 파라미터 정의
+    print(f"🔍 날짜 검증: {api_path}")
+    
+    # API별 필수 파라미터 정의
     api_requirements = {
-        # 람다1 (슈퍼바이저) - 비용 조회 API
-        '/costs/ondemand/corp/monthly': {'required': ['from', 'to'], 'format': 'YYYYMM'},
-        '/costs/ondemand/account/monthly': {'required': ['from', 'to', 'accountId'], 'format': 'YYYYMM'},
-        '/costs/ondemand/corp/daily': {'required': ['from', 'to'], 'format': 'YYYYMMDD'},
-        '/costs/ondemand/account/daily': {'required': ['from', 'to', 'accountId'], 'format': 'YYYYMMDD'},
-        
-        # 람다2 (에이전트2) - 청구서/사용량 API
         '/invoice/corp/monthly': {'required': ['billingPeriod'], 'format': 'YYYYMM'},
         '/invoice/account/monthly': {'required': ['billingPeriod'], 'format': 'YYYYMM'},
         '/usage/ondemand/monthly': {'required': ['from', 'to'], 'format': 'YYYYMM'},
@@ -375,31 +307,30 @@ def validate_date_logic(params, api_path=None):
         for param in required_params:
             param_value = str(params[param])
             if expected_format == 'YYYYMM' and not (len(param_value) == 6 and param_value.isdigit()):
-                warnings.append(f"'{param}' 파라미터는 YYYYMM 형식(6자리 숫자)이어야 합니다: {param_value}")
+                warnings.append(f"'{param}' 파라미터는 YYYYMM 형식이어야 합니다: {param_value}")
             elif expected_format == 'YYYYMMDD' and not (len(param_value) == 8 and param_value.isdigit()):
-                warnings.append(f"'{param}' 파라미터는 YYYYMMDD 형식(8자리 숫자)이어야 합니다: {param_value}")
+                warnings.append(f"'{param}' 파라미터는 YYYYMMDD 형식이어야 합니다: {param_value}")
     
     # billingPeriod 검증 (청구서 API용)
     if 'billingPeriod' in params:
         billing_period = str(params['billingPeriod'])
-        if len(billing_period) == 6:  # YYYYMM 형식
+        if len(billing_period) == 6:
             try:
                 year = int(billing_period[:4])
                 month = int(billing_period[4:])
                 current_year = current_info['current_year']
                 current_month = current_info['current_month']
                 
-                # 현재 월보다 이후 월만 미래로 간주 (같은 연도의 과거 월은 허용)
                 is_future_month = (year > current_year) or \
                                 (year == current_year and month > current_month)
                 
                 if is_future_month:
-                    warnings.append(f"요청하신 월이 미래입니다: {billing_period} (현재: {current_year}{current_month:02d})")
+                    warnings.append(f"요청하신 월이 미래입니다: {billing_period}")
                     
             except ValueError as e:
-                warnings.append(f"billingPeriod 파싱 오류: {e}. 유효한 월 형식(YYYYMM)을 입력해주세요.")
+                warnings.append(f"billingPeriod 파싱 오류: {e}")
     
-    # from/to 파라미터 검증 (비용/사용량 API용)
+    # from/to 파라미터 검증
     if 'from' in params and 'to' in params:
         from_str = str(params['from'])
         to_str = str(params['to'])
@@ -409,67 +340,57 @@ def validate_date_logic(params, api_path=None):
             from_dt_obj = None
             to_dt_obj = None
 
-            if len(from_str) == 8 and len(to_str) == 8:  # YYYYMMDD 형식
+            if len(from_str) == 8 and len(to_str) == 8:
                 from_dt_obj = datetime.strptime(from_str, '%Y%m%d').date()
                 to_dt_obj = datetime.strptime(to_str, '%Y%m%d').date()
                 is_daily_format = True
-            elif len(from_str) == 6 and len(to_str) == 6:  # YYYYMM 형식
+            elif len(from_str) == 6 and len(to_str) == 6:
                 from_dt_obj = datetime.strptime(from_str + '01', '%Y%m%d').date()
-                # to_dt_obj는 해당 월의 마지막 날짜로 설정하여 비교
                 next_month = (datetime.strptime(to_str + '01', '%Y%m%d').replace(day=1) + timedelta(days=32)).replace(day=1)
                 to_dt_obj = (next_month - timedelta(days=1)).date()
             else:
                 warnings.append("날짜 형식이 올바르지 않습니다 (YYYYMM 또는 YYYYMMDD).")
                 return warnings
             
-            # 조회 기간 시작일이 종료일보다 늦을 경우
             if from_dt_obj > to_dt_obj:
                 warnings.append("조회 시작일이 종료일보다 늦습니다.")
 
-            # 미래 날짜/월 체크 (현재 날짜를 기준으로 판단)
             if is_daily_format:
-                # 시작 날짜 또는 종료 날짜가 오늘보다 미래인 경우
                 if from_dt_obj > current_date_only or to_dt_obj > current_date_only:
                     warnings.append(f"요청하신 날짜가 미래입니다: {from_str} - {to_str}")
-            else: # 월별
-                # 요청된 월의 연도와 월을 추출
+            else:
                 req_from_year = int(from_str[:4])
                 req_from_month = int(from_str[4:])
                 req_to_year = int(to_str[:4])
                 req_to_month = int(to_str[4:])
                 
-                # 현재 연도와 월을 기준으로 미래인지 판단
                 current_year = current_info['current_year']
                 current_month = current_info['current_month']
                 
-                # 현재 월보다 이후 월만 미래로 간주 (같은 연도의 과거 월은 허용)
                 is_from_future_month = (req_from_year > current_year) or \
                                      (req_from_year == current_year and req_from_month > current_month)
                 is_to_future_month = (req_to_year > current_year) or \
                                    (req_to_year == current_year and req_to_month > current_month)
                 
-                # 미래 월인 경우에만 경고
                 if is_from_future_month or is_to_future_month:
-                    warnings.append(f"요청하신 월이 미래입니다: {from_str} - {to_str} (현재: {current_year}{current_month:02d})")
+                    warnings.append(f"요청하신 월이 미래입니다: {from_str} - {to_str}")
                     
         except ValueError as e:
-            warnings.append(f"날짜 파싱 오류: {e}. 유효한 날짜 형식을 입력해주세요.")
+            warnings.append(f"날짜 파싱 오류: {e}")
     
-    # beginDate/endDate 파라미터 검증 (태그별 사용량 API용)
+    # beginDate/endDate 파라미터 검증
     if 'beginDate' in params and 'endDate' in params:
         begin_str = str(params['beginDate'])
         end_str = str(params['endDate'])
         
         try:
-            if len(begin_str) == 8 and len(end_str) == 8:  # YYYYMMDD 형식
+            if len(begin_str) == 8 and len(end_str) == 8:
                 begin_dt_obj = datetime.strptime(begin_str, '%Y%m%d').date()
                 end_dt_obj = datetime.strptime(end_str, '%Y%m%d').date()
                 
-                # 조회 기간 시작일이 종료일보다 늦을 경우
                 if begin_dt_obj > end_dt_obj:
                     warnings.append("조회 시작일이 종료일보다 늦습니다.")
 
-                # 시작 날짜 또는 종료 날짜가 오늘보다 미래인 경우
                 if begin_dt_obj > current_date_only or end_dt_obj > current_date_only:
                     warnings.append(f"요청하신 날짜가 미래입니다: {begin_str} - {end_str}")
             else:
@@ -477,11 +398,8 @@ def validate_date_logic(params, api_path=None):
                 return warnings
                     
         except ValueError as e:
-            warnings.append(f"날짜 파싱 오류: {e}. 유효한 날짜 형식을 입력해주세요.")
+            warnings.append(f"날짜 파싱 오류: {e}")
 
-    if warnings:
-        print(f"⚠️ 날짜 검증 경고: {warnings}")
-    
     return warnings
 
 def safe_float(val):
@@ -491,9 +409,7 @@ def safe_float(val):
         return 0.0
 
 def lambda_handler(event, context):
-    print(f"--- API 호출 시작 (Bedrock Agent Event) ---")
-    # 이벤트 로깅 시에도 custom_json_serializer 적용
-    print(f"수신된 이벤트: {json.dumps(event, indent=2, default=custom_json_serializer)}") 
+    print(f"🚀 Lambda 2 시작: {event.get('apiPath', 'N/A')}")
 
     session = create_retry_session()
 
@@ -504,7 +420,7 @@ def lambda_handler(event, context):
         action_group = event.get('actionGroup')
         api_path_from_event = event.get('apiPath')
         
-        # 새로운 API 경로와 operationId 매핑 딕셔너리
+        # API 경로와 operationId 매핑
         path_to_operation_map = {
             '/invoice/corp/monthly': 'getCorpMonthlyInvoice',
             '/invoice/account/monthly': 'getAccountMonthlyInvoice',
@@ -514,21 +430,20 @@ def lambda_handler(event, context):
         }
         
         operation_id = path_to_operation_map.get(api_path_from_event)
-        print(f"DEBUG: apiPath '{api_path_from_event}'로부터 operationId '{operation_id}' 유추")
         
         if not operation_id:
             return create_bedrock_response(event, 404, error_message=f"지원하지 않는 API 경로: {api_path_from_event}")
 
         params = extract_parameters(event)
-        print(f"📝 추출된 파라미터: {params}")
+        print(f"📝 파라미터: {params}")
         
-        # billingPeriod를 from/to로 변환 (월별 API용)
+        # billingPeriod를 from/to로 변환
         if 'billingPeriod' in params and not ('from' in params and 'to' in params):
             billing_period = str(params['billingPeriod'])
-            if len(billing_period) == 6:  # YYYYMM 형식
+            if len(billing_period) == 6:
                 params['from'] = billing_period
                 params['to'] = billing_period
-                print(f"🔄 billingPeriod를 from/to로 변환: {billing_period} → from={params['from']}, to={params['to']}")
+                print(f"🔄 billingPeriod 변환: {billing_period} → from/to")
         
         # ✨ 날짜 검증 로직 적용 ✨
         date_warnings = validate_date_logic(params, api_path_from_event)
@@ -559,14 +474,9 @@ def lambda_handler(event, context):
 
         # API 요청 로깅 함수
         def log_api_request(api_path, request_data, headers_info):
-            """API 요청 정보를 CloudWatch에 로깅합니다."""
-            print(f"🌐 FitCloud API 요청 정보:")
-            print(f"  - URL: {FITCLOUD_BASE_URL}{api_path}")
-            print(f"  - Method: POST")
-            print(f"  - Headers: {json.dumps(headers_info, indent=2, default=custom_json_serializer)}")
-            print(f"  - Request Data: {json.dumps(request_data, indent=2, ensure_ascii=False, default=custom_json_serializer)}")
-            print(f"  - Content-Type: multipart/form-data")
-            print(f"  - Timeout: 30초")
+            """API 요청 정보를 로깅합니다."""
+            print(f"🌐 API 호출: {api_path}")
+            print(f"  - 파라미터: {request_data}")
 
         # 공통 파라미터 체크 함수 (필수/선택 파라미터 추출)
         def check_and_get_params(required_params, optional_params=None):
@@ -597,9 +507,7 @@ def lambda_handler(event, context):
             log_api_request(target_api_path, api_data, headers)
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepared_data, timeout=30)
             raw_data = response.json()
-            print("--- Raw API Response Start ---")
-            print(json.dumps(raw_data, indent=2, ensure_ascii=False))
-            print("--- Raw API Response End ---")
+            print(f"✅ API 응답 수신: {len(raw_data.get('body', []))}개 항목")
             processed_data_wrapper = process_fitcloud_response(raw_data)
             actual_items_data = processed_data_wrapper.get("data", [])
             # USD 기준 합산 및 표기
@@ -647,9 +555,7 @@ def lambda_handler(event, context):
             log_api_request(target_api_path, api_data, headers)
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepared_data, timeout=30)
             raw_data = response.json()
-            print("--- Raw API Response Start ---")
-            print(json.dumps(raw_data, indent=2, ensure_ascii=False))
-            print("--- Raw API Response End ---")
+            print(f"✅ API 응답 수신: {len(raw_data.get('body', []))}개 항목")
             processed_data_wrapper = process_fitcloud_response(raw_data)
             actual_items_data = processed_data_wrapper.get("data", [])
             # accountId로 필터링 추가
@@ -707,9 +613,7 @@ def lambda_handler(event, context):
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepared_data, timeout=60) 
             
             raw_data = response.json()
-            print("--- Raw API Response Start ---")
-            print(json.dumps(raw_data, indent=2, ensure_ascii=False))
-            print("--- Raw API Response End ---")
+            print(f"✅ API 응답 수신: {len(raw_data.get('body', []))}개 항목")
             processed_data_wrapper = process_fitcloud_response(raw_data)
             actual_items_data = processed_data_wrapper.get("data", [])
             
@@ -787,9 +691,7 @@ def lambda_handler(event, context):
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepared_data, timeout=60) 
             
             raw_data = response.json()
-            print("--- Raw API Response Start ---")
-            print(json.dumps(raw_data, indent=2, ensure_ascii=False))
-            print("--- Raw API Response End ---")
+            print(f"✅ API 응답 수신: {len(raw_data.get('body', []))}개 항목")
             processed_data_wrapper = process_fitcloud_response(raw_data)
             actual_items_data = processed_data_wrapper.get("data", [])
             
@@ -866,9 +768,7 @@ def lambda_handler(event, context):
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepared_data, timeout=60) 
             
             raw_data = response.json()
-            print("--- Raw API Response Start ---")
-            print(json.dumps(raw_data, indent=2, ensure_ascii=False))
-            print("--- Raw API Response End ---")
+            print(f"✅ API 응답 수신: {len(raw_data.get('body', []))}개 항목")
             processed_data_wrapper = process_fitcloud_response(raw_data)
             actual_items_data = processed_data_wrapper.get("data", [])
             

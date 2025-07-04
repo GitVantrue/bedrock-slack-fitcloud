@@ -25,111 +25,64 @@ SUMMARY_ITEM_COUNT_THRESHOLD = 20  # 더 많은 항목을 허용
 
 def get_current_date_info():
     """현재 날짜 정보를 KST(한국 표준시) 기준으로 반환합니다."""
-    # 디버깅을 위한 상세 로깅 추가
-    import os
-    
-    print(f"🔍 Lambda 1 시간대 디버깅 정보:")
-    print(f"  - 시스템 TZ 환경변수: {os.environ.get('TZ', '설정되지 않음')}")
-    print(f"  - UTC 시간: {datetime.utcnow()}")
-    print(f"  - 로컬 시간 (시스템): {datetime.now()}")
-    
-    # 여러 방법으로 KST 시간 계산 (일관성 확인)
     utc_now = datetime.utcnow()
     tz = pytz.timezone('Asia/Seoul')
-    
-    # 방법 1: UTC 기반 변환
     utc_with_tz = pytz.utc.localize(utc_now)
-    now_method1 = utc_with_tz.astimezone(tz)
-    
-    # 방법 2: 직접 KST 계산
-    now_method2 = datetime.now(tz)
-    
-    # 방법 3: 수동 KST 계산 (UTC + 9시간)
-    kst_offset = timedelta(hours=9)
-    now_method3 = utc_now + kst_offset
-    
-    print(f"  - 방법 1 (UTC→KST 변환): {now_method1}")
-    print(f"  - 방법 2 (직접 KST): {now_method2}")
-    print(f"  - 방법 3 (수동 +9시간): {now_method3}")
-    
-    # 가장 안정적인 방법 선택 (방법 1)
-    now = now_method1
-    
-    # 일관성 검증
-    if now_method1.date() != now_method2.date():
-        print(f"⚠️ 경고: Lambda 1 시간대 계산 방법 간 차이 발견!")
-        print(f"  - 방법 1: {now_method1.date()}")
-        print(f"  - 방법 2: {now_method2.date()}")
-    
-    print(f"🕐 Lambda 1 최종 현재 시간 정보:")
-    print(f"  - 현재 날짜/시간: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-    print(f"  - 현재 날짜: {now.year}년 {now.month}월 {now.day}일")
+    now = utc_with_tz.astimezone(tz)
     
     return {
         'current_year': now.year,
         'current_month': now.month,
         'current_day': now.day,
-        'current_datetime': now, # 시간대 정보 포함된 datetime 객체
-        'current_date_str': now.strftime('%Y%m%d'),  # YYYYMMDD 형식
-        'current_month_str': now.strftime('%Y%m'),   # YYYYMM 형식
-        'utc_time': utc_now.isoformat(),  # UTC 시간도 포함
-        'kst_time': now.isoformat()       # KST 시간도 포함
+        'current_datetime': now,
+        'current_date_str': now.strftime('%Y%m%d'),
+        'current_month_str': now.strftime('%Y%m'),
+        'utc_time': utc_now.isoformat(),
+        'kst_time': now.isoformat()
     }
 
 def smart_date_correction(params):
     """
     사용자 의도에 맞게 날짜 파라미터를 보정합니다.
-    Agent가 잘못 추론한 연도를 올바르게 수정하며, 연도가 없는 경우 현재 연도를 추가 시도합니다.
     """
     current_info = get_current_date_info()
     current_year = current_info['current_year']
-    current_month_str = f"{current_info['current_month']:02d}"
-    current_day_str = f"{current_info['current_day']:02d}"
-
-    print(f"🗓️ 현재 날짜 정보 (smart_date_correction 내부): {current_year}년 {current_month_str}월 {current_day_str}일")
     
     corrected_params = params.copy()
     
     # 'from' 또는 'to' 파라미터가 없는 경우, 현재 날짜를 기본값으로 설정
-    # 단, 청구서 API의 경우 billingPeriod가 있으면 from/to를 자동으로 설정하지 않음
     if 'from' not in corrected_params and 'to' not in corrected_params:
-        # 청구서 API의 경우 billingPeriod가 있으면 from/to를 자동 설정하지 않음
-        # 사용량 API의 경우 billingPeriod를 from/to로 변환하므로 여기서는 자동 설정
         if 'billingPeriod' in corrected_params:
-            print(f"➕ billingPeriod가 있으므로 from/to 자동 설정 건너뜀: billingPeriod={corrected_params['billingPeriod']}")
+            print(f"📅 billingPeriod 존재: {corrected_params['billingPeriod']}")
         else:
-            today_str = f"{current_year}{current_month_str}{current_day_str}"
+            today_str = f"{current_year}{current_info['current_month']:02d}{current_info['current_day']:02d}"
             corrected_params['from'] = today_str
             corrected_params['to'] = today_str
-            print(f"➕ 날짜 파라미터 없음. 오늘 날짜로 기본값 설정: from={today_str}, to={today_str}")
+            print(f"📅 기본값 설정: from={today_str}, to={today_str}")
 
     for param_name in ['from', 'to']:
-        original_value = str(corrected_params.get(param_name, '')) # params.get()으로 안전하게 접근
+        original_value = str(corrected_params.get(param_name, ''))
         
-        # 값이 비어있으면 건너뜀 (위에서 기본값 설정 후에도 여전히 비어있다면)
         if not original_value.strip():
-            print(f"➡️ {param_name} 값이 비어있어 보정을 건너뜀.")
             continue
 
-        # 월만 입력된 경우(예: '5', '05', '6', '06')
+        # 월만 입력된 경우(예: '5', '05')
         if len(original_value) == 1 or (len(original_value) == 2 and original_value.isdigit()):
-            # 1~12월로 인식
             month_str = original_value.zfill(2)
             yyyymm = f"{current_year}{month_str}"
             corrected_params[param_name] = yyyymm
-            print(f"🔄 {param_name} 보정됨 (월만 입력 → YYYYMM): {original_value} → {yyyymm}")
+            print(f"📅 {param_name} 보정: {original_value} → {yyyymm}")
             continue
 
         # MMDD 형태 (예: '0603')
         if len(original_value) == 4 and original_value.isdigit():
             test_date_str = str(current_year) + original_value
             try:
-                datetime.strptime(test_date_str, '%Y%m%d') # 유효한 날짜인지 확인
+                datetime.strptime(test_date_str, '%Y%m%d')
                 corrected_params[param_name] = test_date_str
-                print(f"🔄 {param_name} 보정됨 (MMDD -> YYYYMMDD): {original_value} → {test_date_str}")
+                print(f"📅 {param_name} 보정: {original_value} → {test_date_str}")
                 continue
             except ValueError:
-                print(f"❌ {param_name} '{original_value}'는 유효한 MMDD 형식이 아니거나 연도 추가 후 유효하지 않음.")
                 pass
 
         # YYYYMMDD 또는 YYYYMM 형식에서 연도 보정
@@ -137,23 +90,16 @@ def smart_date_correction(params):
             year_part = original_value[:4]
             suffix_part = original_value[4:]
             try:
-                # 입력된 연도가 현재 연도보다 이전이고, 너무 과거가 아니라면 현재 연도로 보정 시도
                 if int(year_part) < current_year and int(year_part) >= 2020:
                     corrected_value = str(current_year) + suffix_part
-                    # 보정된 날짜가 유효한지 최종 확인
                     if len(corrected_value) == 8:
                         datetime.strptime(corrected_value, '%Y%m%d')
                     elif len(corrected_value) == 6:
                         datetime.strptime(corrected_value + '01', '%Y%m%d')
                     corrected_params[param_name] = corrected_value
-                    print(f"🔄 {param_name} 보정됨 (이전 연도 -> 현재 연도): {original_value} → {corrected_value}")
-                else:
-                    print(f"➡️ {param_name} 연도 {year_part}는 보정 대상이 아니거나 이미 올바름.")
+                    print(f"📅 {param_name} 연도 보정: {original_value} → {corrected_value}")
             except ValueError:
-                print(f"⚠️ {param_name} '{original_value}' 연도 부분 '{year_part}'이 숫자가 아니거나 보정 후 날짜가 유효하지 않습니다.")
                 pass
-        else:
-            print(f"⚠️ {param_name} '{original_value}'는 예상된 날짜 형식이 아닙니다. 보정을 건너뜀.")
 
     return corrected_params
 
@@ -515,59 +461,43 @@ def create_bedrock_response(event, status_code=200, response_data=None, error_me
 def determine_api_path(params):
     """
     파라미터 기반으로 올바른 API 경로 결정 (On-Demand 비용 조회용)
-    우선순위: billingPeriod 존재 여부 → accountId 존재 여부 → 시간 단위 (daily/monthly)
     """
-    
-    # 0단계: billingPeriod 존재 여부 확인 (월별 API 우선)
     has_billing_period = 'billingPeriod' in params and params['billingPeriod'] and str(params['billingPeriod']).strip() != '' and str(params['billingPeriod']).strip().lower() != 'none'
-    
-    # 1단계: accountId 존재 여부 확인
     has_account_id = 'accountId' in params and params['accountId'] and str(params['accountId']).strip() != '' and str(params['accountId']).strip().lower() != 'none'
     
-    # 2단계: 시간 단위 확인 (날짜 형식으로 판단)
-    # smart_date_correction에서 이미 from/to가 채워졌다고 가정
     date_format = None
     if 'from' in params and params['from']: 
         from_param = str(params['from'])
-        if len(from_param) == 8:  # YYYYMMDD
+        if len(from_param) == 8:
             date_format = 'daily'
-        elif len(from_param) == 6:  # YYYYMM
+        elif len(from_param) == 6:
             date_format = 'monthly'
     
-    print(f"🔍 API 경로 결정 로직:")
-    print(f"  - billingPeriod 존재: {has_billing_period} (값: '{params.get('billingPeriod')}')")
-    print(f"  - accountId 존재: {has_account_id} (값: '{params.get('accountId')}')")
-    print(f"  - from 값: '{params.get('from', '없음')}'")
-    print(f"  - 판단된 날짜 형식: {date_format}")
+    print(f"🔍 API 경로 결정: billingPeriod={has_billing_period}, accountId={has_account_id}, format={date_format}")
     
-    # 3단계: API 경로 결정
-    # billingPeriod가 있으면 무조건 월별 API로 결정
     if has_billing_period:
         if has_account_id:
-            print("✅ billingPeriod + accountId → 계정별 월별 API")
+            print(f"  → 계정별 월별 API")
             return '/costs/ondemand/account/monthly'
         else:
-            print("✅ billingPeriod만 있음 → 법인 월별 API")
+            print(f"  → 법인 월별 API")
             return '/costs/ondemand/corp/monthly'
     
-    # billingPeriod가 없는 경우 기존 로직
     if has_account_id:
         if date_format == 'daily':
             return '/costs/ondemand/account/daily'
         elif date_format == 'monthly':
             return '/costs/ondemand/account/monthly'
         else:
-            # 날짜 형식을 알 수 없으면 기본적으로 '일별'로 가정
-            print("❗ accountId는 있으나 날짜 형식 미정. 계정별 일별로 기본값 설정.")
+            print(f"  → 계정별 일별 API (기본값)")
             return '/costs/ondemand/account/daily'
-    else: # 법인 전체 조회
+    else:
         if date_format == 'daily':
             return '/costs/ondemand/corp/daily'
         elif date_format == 'monthly':
             return '/costs/ondemand/corp/monthly'
         else:
-            # 날짜 형식을 알 수 없으면 기본적으로 '일별'로 가정
-            print("❗ accountId 없고 날짜 형식 미정. 법인 일별로 기본값 설정.")
+            print(f"  → 법인 일별 API (기본값)")
             return '/costs/ondemand/corp/daily'
 
 
@@ -575,27 +505,27 @@ def extract_parameters(event):
     """이벤트에서 파라미터를 추출합니다."""
     params = {}
     session_current_year = None
+    
     # Query Parameters (OpenAPI path parameters)
     if 'parameters' in event:
         for param in event['parameters']:
             params[param['name']] = param['value']
+    
     # Request Body Parameters (from Bedrock Agent)
     if 'requestBody' in event and 'content' in event['requestBody']:
         content = event['requestBody']['content']
-        # application/x-www-form-urlencoded 처리
         if 'application/x-www-form-urlencoded' in content:
             body_content = content['application/x-www-form-urlencoded']
-            if 'body' in body_content: # 기본 바디 형태 (단일 문자열)
+            if 'body' in body_content:
                 body_str = body_content['body']
                 from urllib.parse import parse_qs
                 parsed_body = parse_qs(body_str)
                 for key, value_list in parsed_body.items():
                     if value_list:
                         params[key] = value_list[0]
-            elif 'properties' in body_content: # 스키마의 properties 형태
+            elif 'properties' in body_content:
                 for prop_data in body_content['properties']:
                     params[prop_data['name']] = prop_data['value']
-        # application/json 처리
         elif 'application/json' in content:
             body_str = content['application/json'].get('body')
             if body_str:
@@ -603,110 +533,91 @@ def extract_parameters(event):
                     json_body = json.loads(body_str)
                     params.update(json_body)
                 except json.JSONDecodeError:
-                    print(f"JSON body 파싱 실패: {body_str[:100]}...")
                     pass
-    # 세션 속성에서 날짜 정보 가져오기 (Agent가 전달했다면)
+    
+    # 세션 속성에서 날짜 정보 가져오기
     if 'sessionAttributes' in event:
         session_attrs = event['sessionAttributes']
         if 'current_year' in session_attrs:
             session_current_year = str(session_attrs['current_year'])
-            print(f"DEBUG: Session Attributes에서 current_year 감지: {session_current_year}")
-    # session_current_year가 없거나 2025가 아니면 현재 연도로 강제 보정
+    
+    # 현재 연도로 보정
     current_info = get_current_date_info()
     real_current_year = str(current_info['current_year'])
     if not session_current_year or session_current_year != real_current_year:
-        print(f"⚠️ sessionAttributes.current_year가 '{session_current_year}' → '{real_current_year}'(현재 연도)로 보정됨")
         session_current_year = real_current_year
-    # === inputText에서 월 정보 추출 보조 로직 ===
+    
+    # inputText에서 월 정보 추출
     input_text = event.get('inputText', '')
     import re
     month_match = re.search(r'([0-9]{1,2})월', input_text)
     if month_match and not params.get('billingPeriod'):
         month_str = month_match.group(1).zfill(2)
         params['billingPeriod'] = f"{session_current_year}{month_str}"
-        print(f"[DEBUG] inputText에서 월 추출 → billingPeriod: {params['billingPeriod']}")
-    # 월만 입력된 경우 보정 (current_year 우선 적용)
+        print(f"📅 inputText에서 월 추출: {params['billingPeriod']}")
+    
+    # 월만 입력된 경우 보정
     for k, v in list(params.items()):
         if k in ['from', 'to', 'billingPeriod', 'beginDate', 'endDate']:
             v_str = str(v)
             if (len(v_str) == 1 or (len(v_str) == 2 and v_str.isdigit())) and session_current_year:
-                # 월만 입력된 경우
                 params[k] = f"{session_current_year}{v_str.zfill(2)}"
-                print(f"[extract_parameters] 월만 입력된 {k} → {params[k]} (sessionAttributes.current_year 적용)")
-    # === 디버깅 로그 추가 ===
-    print(f"[DEBUG] extract_parameters 최종 billingPeriod: {params.get('billingPeriod')}")
-    print(f"[DEBUG] extract_parameters 최종 파라미터: {params}")
-    # billingPeriod/billingPeriodDaily 자동 생성 보정
+                print(f"📅 월 보정: {k}={v} → {params[k]}")
+    
+    # billingPeriod 자동 생성
     if not params.get('billingPeriod') and params.get('from') and len(str(params['from'])) >= 6:
         params['billingPeriod'] = str(params['from'])[:6]
-        print(f"[extract_parameters] from에서 billingPeriod 자동 생성: {params['billingPeriod']}")
     if not params.get('billingPeriodDaily') and params.get('from') and len(str(params['from'])) == 8:
         params['billingPeriodDaily'] = str(params['from'])
-        print(f"[extract_parameters] from에서 billingPeriodDaily 자동 생성: {params['billingPeriodDaily']}")
+    
     return params
 
 def lambda_handler(event, context):
-    print(f"--- 슈퍼바이저 API 호출 시작 (Bedrock Agent Event) ---")
-    print(f"수신된 이벤트: {json.dumps(event, indent=2, ensure_ascii=False)}")
+    print(f"🚀 Lambda 1 시작: {event.get('apiPath', 'N/A')}")
 
     try:
-        # 기본 이벤트 형식 검증
         if 'messageVersion' not in event or 'actionGroup' not in event:
             return create_bedrock_response(event, 400, error_message="Invalid event format from Bedrock Agent.")
 
-        api_path_from_event = event.get('apiPath') # Agent가 호출하려는 API 경로
-        
+        api_path_from_event = event.get('apiPath')
         if not api_path_from_event:
             return create_bedrock_response(event, 400, error_message="API path missing in event payload.")
 
         # 파라미터 추출
         params = extract_parameters(event)
-        print(f"📝 원본 추출 파라미터: {params}")
+        print(f"📝 파라미터: {params}")
 
-        # ✨ 날짜 보정 로직 적용 ✨
+        # 날짜 보정
         params = smart_date_correction(params)
-        print(f"📝 보정 후 파라미터: {params}")
         
-        # billingPeriod를 from/to로 변환 (월별 API용)
+        # billingPeriod를 from/to로 변환
         if 'billingPeriod' in params and not ('from' in params and 'to' in params):
             billing_period = str(params['billingPeriod'])
-            if len(billing_period) == 6:  # YYYYMM 형식
+            if len(billing_period) == 6:
                 params['from'] = billing_period
                 params['to'] = billing_period
-                print(f"🔄 billingPeriod를 from/to로 변환: {billing_period} → from={params['from']}, to={params['to']}")
+                print(f"🔄 billingPeriod 변환: {billing_period} → from/to")
         
-        # API 경로 결정 후 날짜 검증 (API 경로별 필수 파라미터 검증을 위해)
+        # API 경로 결정
         target_api_path = determine_api_path(params)
-        print(f"🔍 결정된 API 경로: {target_api_path}")
         
+        # 날짜 검증
         date_warnings = validate_date_logic(params, target_api_path)
         if date_warnings:
-            print(f"DEBUG: 날짜 유효성 검증 경고: {date_warnings}")
-            # 400 Bad Request로 응답하여 Agent가 재요청하거나 사용자에게 알리도록 함
             return create_bedrock_response(
                 event, 400, 
                 error_message=f"날짜 오류: {'; '.join(date_warnings)}. 유효한 날짜 또는 기간을 입력해주세요."
             )
-        print(f"📝 최종 확인 파라미터: {params}")
-        # === Agent2 위임 직전 디버깅 로그 추가 ===
-        print(f"[DEBUG] Agent2 위임 직전 billingPeriod: {params.get('billingPeriod')}")
-        print(f"[DEBUG] Agent2 위임 직전 전체 파라미터: {params}")
-        # ✨ 날짜 보정 로직 적용 끝 ✨
 
-        # 월별/일별 기능 진입 전 billingPeriod/billingPeriodDaily 보정
+        # billingPeriod 자동 생성
         if (api_path_from_event in ['/costs/ondemand/account/monthly', '/costs/ondemand/corp/monthly']) and not params.get('billingPeriod'):
             if params.get('from') and len(str(params['from'])) >= 6:
                 params['billingPeriod'] = str(params['from'])[:6]
-                print(f"[lambda_handler] from에서 billingPeriod 자동 생성: {params['billingPeriod']}")
         if (api_path_from_event in ['/costs/ondemand/account/daily', '/costs/ondemand/corp/daily']) and not params.get('billingPeriodDaily'):
             if params.get('from') and len(str(params['from'])) == 8:
                 params['billingPeriodDaily'] = str(params['from'])
-                print(f"[lambda_handler] from에서 billingPeriodDaily 자동 생성: {params['billingPeriodDaily']}")
 
-        # API 경로 결정 (모든 FitCloud API 경로 지원)
-        target_api_path = None
-        
-        # 사용자 의도 파악을 위한 키워드 분석
+        # 사용자 의도 파악
         input_text = event.get('inputText', '').lower()
         user_intent = {
             'is_cost_request': any(keyword in input_text for keyword in ['사용요금', '비용', 'cost', '요금']),
@@ -810,99 +721,73 @@ def lambda_handler(event, context):
                     data[p] = params[p]
             return data
 
-        print(f"📞 FitCloud API 호출 준비: {FITCLOUD_BASE_URL}{target_api_path}")
+        print(f"🌐 API 호출: {target_api_path}")
         if target_api_path == '/accounts':
-            print("  - 작업: 계정 목록 조회")
+            print("  - 계정 목록 조회")
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, timeout=30)
             
         elif target_api_path == '/costs/ondemand/corp/monthly':
-            print("  - 작업: 법인 월별 온디맨드 비용 조회")
+            print("  - 법인 월별 비용 조회")
             api_data = check_and_prepare_data(['from', 'to'])
-            # billingPeriod가 있으면 추가
             if 'billingPeriod' in params:
                 api_data['billingPeriod'] = params['billingPeriod']
-                print(f"  - billingPeriod 추가: {api_data['billingPeriod']}")
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, data=api_data, timeout=30)
             
         elif target_api_path == '/costs/ondemand/account/monthly':
-            print("  - 작업: 계정 월별 온디맨드 비용 조회")
+            print("  - 계정 월별 비용 조회")
             api_data = check_and_prepare_data(['from', 'to', 'accountId'])
-            # billingPeriod가 있으면 추가
             if 'billingPeriod' in params:
                 api_data['billingPeriod'] = params['billingPeriod']
-                print(f"  - billingPeriod 추가: {api_data['billingPeriod']}")
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, data=api_data, timeout=30)
             
         elif target_api_path == '/costs/ondemand/corp/daily':
-            print("  - 작업: 법인 일별 온디맨드 비용 조회")
+            print("  - 법인 일별 비용 조회")
             api_data = check_and_prepare_data(['from', 'to'])
-            # billingPeriodDaily가 있으면 추가
             if 'billingPeriodDaily' in params:
                 api_data['billingPeriodDaily'] = params['billingPeriodDaily']
-                print(f"  - billingPeriodDaily 추가: {api_data['billingPeriodDaily']}")
-            # serviceName이 있으면 추가 (선택적 파라미터)
             if 'serviceName' in params:
                 api_data['serviceName'] = params['serviceName']
-                print(f"  - serviceName 추가: {api_data['serviceName']}")
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, data=api_data, timeout=30)
             
         elif target_api_path == '/costs/ondemand/account/daily':
-            print("  - 작업: 계정 일별 온디맨드 비용 조회")
+            print("  - 계정 일별 비용 조회")
             api_data = check_and_prepare_data(['from', 'to', 'accountId'])
-            # billingPeriodDaily가 있으면 추가
             if 'billingPeriodDaily' in params:
                 api_data['billingPeriodDaily'] = params['billingPeriodDaily']
-                print(f"  - billingPeriodDaily 추가: {api_data['billingPeriodDaily']}")
-            # serviceName이 있으면 추가 (선택적 파라미터)
             if 'serviceName' in params:
                 api_data['serviceName'] = params['serviceName']
-                print(f"  - serviceName 추가: {api_data['serviceName']}")
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, data=api_data, timeout=30)
             
         elif target_api_path.startswith('/invoice/'):
-            print(f"  - 작업: 청구서 API 호출 ({target_api_path})")
-            # 청구서 API는 람다2에서 처리하므로 파라미터만 전달
-            # 청구서는 billingPeriod가 필수
+            print(f"  - 청구서 API 호출")
             api_data = check_and_prepare_data(['billingPeriod'])
-            print(f"  - billingPeriod 사용: {api_data['billingPeriod']}")
             
             if 'accountId' in params:
                 api_data['accountId'] = params['accountId']
-                print(f"  - accountId 포함: {api_data['accountId']}")
             
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, data=api_data, timeout=30)
             
         elif target_api_path.startswith('/usage/'):
-            print(f"  - 작업: 순수 사용량 API 호출 ({target_api_path})")
-            # 순수 사용량 API는 람다2에서 처리하므로 파라미터만 전달
-            # 사용량은 from/to 또는 beginDate/endDate 사용
+            print(f"  - 사용량 API 호출")
             if 'billingPeriod' in params:
-                # billingPeriod가 있으면 from/to로 변환
                 billing_period = params['billingPeriod']
-                if len(billing_period) == 6:  # YYYYMM 형식
-                    # 해당 월의 첫날과 마지막날로 변환
+                if len(billing_period) == 6:
                     year = billing_period[:4]
                     month = billing_period[4:]
                     from_date = f"{year}{month}01"
-                    # 해당 월의 마지막날 계산
                     import calendar
                     last_day = calendar.monthrange(int(year), int(month))[1]
                     to_date = f"{year}{month}{last_day:02d}"
                     api_data = {'from': from_date, 'to': to_date}
-                    print(f"  - billingPeriod를 from/to로 변환: {billing_period} → {from_date}~{to_date}")
                 else:
                     api_data = check_and_prepare_data(['billingPeriod'])
-                    print(f"  - billingPeriod 사용: {api_data['billingPeriod']}")
             elif 'beginDate' in params and 'endDate' in params:
                 api_data = check_and_prepare_data(['beginDate', 'endDate'])
-                print(f"  - beginDate/endDate 사용: {api_data['beginDate']} ~ {api_data['endDate']}")
             else:
                 api_data = check_and_prepare_data(['from', 'to'])
-                print(f"  - from/to 사용: {api_data['from']} ~ {api_data['to']}")
             
             if 'accountId' in params:
                 api_data['accountId'] = params['accountId']
-                print(f"  - accountId 포함: {api_data['accountId']}")
             
             response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, data=api_data, timeout=30)
             
@@ -910,18 +795,13 @@ def lambda_handler(event, context):
             return create_bedrock_response(event, 404, error_message=f"처리할 수 없는 API 경로: {target_api_path}")
 
         # 응답 처리
-        print(f"API 응답 HTTP 상태 코드: {response.status_code}")
-        response.raise_for_status() # HTTP 오류가 발생하면 requests.exceptions.HTTPError 예외 발생
+        response.raise_for_status()
         
         raw_data = response.json()
-        print("--- Raw API Response Start ---")
-        print(json.dumps(raw_data, indent=2, ensure_ascii=False)) 
-        print("--- Raw API Response End ---")
+        print(f"✅ API 응답 수신: {len(raw_data.get('body', []))}개 항목")
 
         processed_data_wrapper = process_fitcloud_response(raw_data, target_api_path) 
         
-        print(f"✅ Bedrock Agent 응답 생성 중...")
-        # create_bedrock_response에서 response_data와 target_api_path를 활용하여 final_data 구성
         return create_bedrock_response(event, 200, processed_data_wrapper)
 
     except ValueError as e:
