@@ -410,16 +410,18 @@ def safe_float(val):
 
 def lambda_handler(event, context):
     print(f"🚀 Lambda 2 시작: {event.get('apiPath', 'N/A')}")
+    print(f"[DEBUG] Raw event: {json.dumps(event, ensure_ascii=False)[:1000]}")  # 이벤트 전체(1000자 제한) 로그
 
     session = create_retry_session()
 
     try:
         if 'messageVersion' not in event:
+            print("[ERROR] Bedrock Agent에서 온 이벤트 포맷 오류")
             return create_bedrock_response(event, 400, error_message="Invalid event format")
 
         action_group = event.get('actionGroup')
         api_path_from_event = event.get('apiPath')
-        
+        print(f"[DEBUG] apiPath_from_event: {api_path_from_event}")
         # API 경로와 operationId 매핑
         path_to_operation_map = {
             '/invoice/corp/monthly': 'getCorpMonthlyInvoice',
@@ -430,12 +432,14 @@ def lambda_handler(event, context):
         }
         
         operation_id = path_to_operation_map.get(api_path_from_event)
+        print(f"[DEBUG] operation_id: {operation_id}")
         
         if not operation_id:
+            print(f"[ERROR] 지원하지 않는 API 경로: {api_path_from_event}")
             return create_bedrock_response(event, 404, error_message=f"지원하지 않는 API 경로: {api_path_from_event}")
 
         params = extract_parameters(event)
-        print(f"📝 파라미터: {params}")
+        print(f"[DEBUG] 추출된 파라미터: {params}")
         
         # usage API에서만 billingPeriod → from/to 변환
         if api_path_from_event.startswith('/usage/ondemand') and 'billingPeriod' in params and not ('from' in params and 'to' in params):
@@ -443,25 +447,26 @@ def lambda_handler(event, context):
             if len(billing_period) == 6:
                 params['from'] = billing_period
                 params['to'] = billing_period
-                print(f"🔄 billingPeriod 변환: {billing_period} → from/to (usage API용)")
+                print(f"[DEBUG] billingPeriod 변환: {billing_period} → from/to (usage API용)")
         # invoice API에서는 billingPeriod만 사용, 변환하지 않음
         
         # ✨ 날짜 검증 로직 적용 ✨
         date_warnings = validate_date_logic(params, api_path_from_event)
         if date_warnings:
-            print(f"DEBUG: 날짜 유효성 검증 경고: {date_warnings}")
+            print(f"[ERROR] 날짜 유효성 검증 경고: {date_warnings}")
             return create_bedrock_response(
                 event, 400, 
                 error_message=f"날짜 오류: {'; '.join(date_warnings)}. 유효한 날짜 또는 기간을 입력해주세요."
             )
-        print(f"📝 최종 확인 파라미터: {params}")
+        print(f"[DEBUG] 최종 확인 파라미터: {params}")
         # ✨ 날짜 검증 로직 적용 끝 ✨
         
         # 토큰 획득
         try:
             current_token = get_fitcloud_token()
-            print("✅ 토큰 획득 성공")
+            print("[DEBUG] FitCloud API 토큰 획득 성공")
         except RuntimeError as e:
+            print(f"[ERROR] 토큰 획득 실패: {e}")
             return create_bedrock_response(event, 401, error_message=f"인증 실패: {str(e)}")
 
         headers = {
@@ -474,8 +479,7 @@ def lambda_handler(event, context):
 
         # API 요청 로깅 함수
         def log_api_request(api_path, request_data, headers_info):
-            """API 요청 정보를 로깅합니다."""
-            print(f"🌐 API 호출: {api_path}")
+            print(f"[DEBUG] API 호출: {api_path}")
             print(f"  - 파라미터: {request_data}")
 
         # 공통 파라미터 체크 함수 (필수/선택 파라미터 추출)
@@ -833,14 +837,14 @@ def lambda_handler(event, context):
             return create_bedrock_response(event, 400, error_message=f"알 수 없는 operationId: {operation_id}")
 
     except ValueError as ve:
-        print(f"❌ 입력 파라미터 또는 비즈니스 로직 오류: {ve}")
+        print(f"[ERROR] 입력 파라미터 또는 비즈니스 로직 오류: {ve}")
         return create_bedrock_response(event, 400, error_message=str(ve))
     except requests.exceptions.RequestException as re:
-        print(f"❌ HTTP 요청 오류: {re}")
+        print(f"[ERROR] HTTP 요청 오류: {re}")
         return create_bedrock_response(event, 503, error_message=f"외부 API 호출 중 네트워크 오류가 발생했습니다. 잠시 후 다시 시도해주세요. 오류: {str(re)}")
     except json.JSONDecodeError as jde:
-        print(f"❌ JSON 파싱 오류: {jde}")
+        print(f"[ERROR] JSON 파싱 오류: {jde}")
         return create_bedrock_response(event, 500, error_message=f"외부 API 응답을 처리하는 중 JSON 파싱 오류가 발생했습니다. 오류: {str(jde)}")
     except Exception as e:
-        print(f"❌ 예기치 않은 오류 발생: {e}", exc_info=True)
+        print(f"[ERROR] 예기치 않은 오류 발생: {e}", exc_info=True)
         return create_bedrock_response(event, 500, error_message=f"서비스 내부 오류가 발생했습니다. 잠시 후 다시 시도해주세요. 오류: {str(e)}")
