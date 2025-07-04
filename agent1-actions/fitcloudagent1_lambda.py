@@ -668,7 +668,9 @@ def lambda_handler(event, context):
 
     # 1. 파라미터 추출 및 보정
     params = extract_parameters(event)
+    print(f"[DEBUG] 추출된 파라미터: {params}")
     params = smart_date_correction(params)
+    print(f"[DEBUG] 보정된 파라미터: {params}")
     input_text = event.get('inputText', '').lower()
     api_path_from_event = event.get('apiPath', '')
 
@@ -716,6 +718,7 @@ def lambda_handler(event, context):
 
     # 4. 필수 파라미터 검증
     date_warnings = validate_date_logic(params, target_api_path)
+    print(f"[DEBUG] 날짜/파라미터 검증 결과: {date_warnings}")
     if date_warnings:
         print(f"[ERROR] 날짜/파라미터 검증 실패: {date_warnings}")
         return create_bedrock_response(event, 400, error_message=f"날짜/파라미터 오류: {'; '.join(date_warnings)}. 유효한 값을 입력해주세요.")
@@ -724,6 +727,7 @@ def lambda_handler(event, context):
     try:
         current_token = get_fitcloud_token()
     except Exception as e:
+        print(f"[ERROR] 토큰 획득 실패: {e}")
         return create_bedrock_response(event, 401, error_message=f"FitCloud API 인증 실패: {str(e)}")
     session = create_retry_session()
     headers = {
@@ -734,55 +738,90 @@ def lambda_handler(event, context):
     # 6. 실제 API 호출 및 응답 포맷 통합
     try:
         if target_api_path == '/accounts':
-            response = session.post(f'{FITCLOUD_BASE_URL}/accounts', headers=headers, timeout=30)
+            url = f'{FITCLOUD_BASE_URL}/accounts'
+            print(f"[REQUEST] POST {url}")
+            print(f"[REQUEST] headers: {headers}")
+            response = session.post(url, headers=headers, timeout=30)
+            print(f"[RESPONSE] status_code: {response.status_code}")
+            print(f"[RESPONSE] body: {str(response.text)[:500]}")
             raw_data = response.json()
             processed_data_wrapper = process_fitcloud_response(raw_data, '/accounts')
             return create_bedrock_response(event, 200, processed_data_wrapper)
 
         elif target_api_path.startswith('/costs/ondemand/'):
-            # 비용(costs) API
             api_data = {}
             if 'from' in params: api_data['from'] = params['from']
             if 'to' in params: api_data['to'] = params['to']
             if 'accountId' in params: api_data['accountId'] = params['accountId']
             if 'billingPeriod' in params: api_data['billingPeriod'] = params['billingPeriod']
-            response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, data=api_data, timeout=30)
+            url = f'{FITCLOUD_BASE_URL}{target_api_path}'
+            print(f"[REQUEST] POST {url}")
+            print(f"[REQUEST] headers: {headers}")
+            print(f"[REQUEST] data: {api_data}")
+            response = session.post(url, headers=headers, data=api_data, timeout=30)
+            print(f"[RESPONSE] status_code: {response.status_code}")
+            print(f"[RESPONSE] body: {str(response.text)[:500]}")
             raw_data = response.json()
             processed_data_wrapper = process_fitcloud_response(raw_data, target_api_path)
             return create_bedrock_response(event, 200, processed_data_wrapper)
 
         elif target_api_path.startswith('/invoice/'):
-            # 청구서(invoce) API
             api_data = {'billingPeriod': params['billingPeriod']}
             if 'accountId' in params:
                 api_data['accountId'] = params['accountId']
-            response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepare_form_data(api_data), timeout=30)
+            url = f'{FITCLOUD_BASE_URL}{target_api_path}'
+            print(f"[REQUEST] POST {url}")
+            print(f"[REQUEST] headers: {headers}")
+            print(f"[REQUEST] data: {api_data}")
+            response = session.post(url, headers=headers, files=prepare_form_data(api_data), timeout=30)
+            print(f"[RESPONSE] status_code: {response.status_code}")
+            print(f"[RESPONSE] body: {str(response.text)[:500]}")
             raw_data = response.json()
             processed_data_wrapper = process_invoice_response(raw_data, params['billingPeriod'], params.get('accountId'))
             return create_bedrock_response(event, 200, processed_data_wrapper)
 
         elif target_api_path.startswith('/usage/ondemand/'):
-            # 순수 usage API
             if api_type == 'usage_tag':
                 api_data = {'beginDate': params['beginDate'], 'endDate': params['endDate']}
-                response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepare_form_data(api_data), timeout=60)
+                url = f'{FITCLOUD_BASE_URL}{target_api_path}'
+                print(f"[REQUEST] POST {url}")
+                print(f"[REQUEST] headers: {headers}")
+                print(f"[REQUEST] data: {api_data}")
+                response = session.post(url, headers=headers, files=prepare_form_data(api_data), timeout=60)
+                print(f"[RESPONSE] status_code: {response.status_code}")
+                print(f"[RESPONSE] body: {str(response.text)[:500]}")
                 raw_data = response.json()
                 processed_data_wrapper = process_usage_response(raw_data, params['beginDate'], params['endDate'], is_tag=True)
             elif api_type == 'usage_daily':
                 api_data = {'from': params['from'], 'to': params['to']}
-                response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepare_form_data(api_data), timeout=60)
+                url = f'{FITCLOUD_BASE_URL}{target_api_path}'
+                print(f"[REQUEST] POST {url}")
+                print(f"[REQUEST] headers: {headers}")
+                print(f"[REQUEST] data: {api_data}")
+                response = session.post(url, headers=headers, files=prepare_form_data(api_data), timeout=60)
+                print(f"[RESPONSE] status_code: {response.status_code}")
+                print(f"[RESPONSE] body: {str(response.text)[:500]}")
                 raw_data = response.json()
                 processed_data_wrapper = process_usage_response(raw_data, params['from'], params['to'], is_daily=True)
             else:
                 api_data = {'from': params['from'], 'to': params['to']}
-                response = session.post(f'{FITCLOUD_BASE_URL}{target_api_path}', headers=headers, files=prepare_form_data(api_data), timeout=60)
+                url = f'{FITCLOUD_BASE_URL}{target_api_path}'
+                print(f"[REQUEST] POST {url}")
+                print(f"[REQUEST] headers: {headers}")
+                print(f"[REQUEST] data: {api_data}")
+                response = session.post(url, headers=headers, files=prepare_form_data(api_data), timeout=60)
+                print(f"[RESPONSE] status_code: {response.status_code}")
+                print(f"[RESPONSE] body: {str(response.text)[:500]}")
                 raw_data = response.json()
                 processed_data_wrapper = process_usage_response(raw_data, params['from'], params['to'])
             return create_bedrock_response(event, 200, processed_data_wrapper)
 
         else:
+            print(f"[ERROR] 지원하지 않는 API 경로: {target_api_path}")
             return create_bedrock_response(event, 404, error_message=f"지원하지 않는 API 경로: {target_api_path}")
 
     except Exception as e:
+        import traceback
         print(f"[ERROR] API 처리 중 예외: {e}")
+        print(traceback.format_exc())
         return create_bedrock_response(event, 500, error_message=f"API 처리 중 오류: {str(e)}")
