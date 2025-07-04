@@ -480,6 +480,8 @@ def process_invoice_response(raw_data, billing_period, account_id=None):
     code = header.get('code')
     message = header.get('message', '')
     body = raw_data.get('body', [])
+    if body is None:
+        body = []
     if code not in [200, 203, 204]:
         raise ValueError(f"FitCloud API error {code}: {message}")
     # accountId 필터링
@@ -490,7 +492,7 @@ def process_invoice_response(raw_data, billing_period, account_id=None):
     for item in body:
         fee_usd = safe_float(item.get("usageFee", 0.0))
         if fee_usd == 0.0:
-            continue  # 0원 데이터는 포함하지 않음
+            continue  # 0원만 제외, 음수(할인)는 포함
         invoice_items.append({
             "serviceName": item.get("invoiceItem", item.get("serviceName", "알 수 없음")),
             "usageFeeUSD": round(fee_usd, 2),
@@ -515,6 +517,8 @@ def process_usage_response(raw_data, from_period, to_period, is_daily=False, is_
     code = header.get('code')
     message = header.get('message', '')
     body = raw_data.get('body', [])
+    if body is None:
+        body = []
     if code not in [200, 203, 204]:
         raise ValueError(f"FitCloud API error {code}: {message}")
     items = []
@@ -524,7 +528,7 @@ def process_usage_response(raw_data, from_period, to_period, is_daily=False, is_
             usage_amount = safe_float(item.get("usageAmount", 0.0))
             on_demand_cost = safe_float(item.get("onDemandCost", 0.0))
             if on_demand_cost == 0.0:
-                continue  # 0원 데이터는 포함하지 않음
+                continue  # 0원만 제외, 음수(할인)는 포함
             parsed_tags_json = {}
             if 'tagsJson' in item and isinstance(item['tagsJson'], str):
                 try:
