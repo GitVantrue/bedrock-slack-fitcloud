@@ -157,17 +157,77 @@ def smart_date_correction(params):
 
     return corrected_params
 
-def validate_date_logic(params):
+def validate_date_logic(params, api_path=None):
     """
     보정된 날짜의 논리적 타당성을 검증합니다.
-    미래 날짜나 잘못된 날짜 범위를 확인합니다.
+    API 경로에 따라 필요한 파라미터를 정확히 검증합니다.
     """
     current_info = get_current_date_info()
     current_date_only = current_info['current_datetime'].date() 
 
     warnings = []
     
-    # 'from'과 'to' 파라미터가 모두 존재할 때만 날짜 유효성 검증
+    # API 경로별 필수 파라미터 정의
+    api_requirements = {
+        # 람다1 (슈퍼바이저) - 비용 조회 API
+        '/costs/ondemand/corp/monthly': {'required': ['from', 'to'], 'format': 'YYYYMM'},
+        '/costs/ondemand/account/monthly': {'required': ['from', 'to', 'accountId'], 'format': 'YYYYMM'},
+        '/costs/ondemand/corp/daily': {'required': ['from', 'to'], 'format': 'YYYYMMDD'},
+        '/costs/ondemand/account/daily': {'required': ['from', 'to', 'accountId'], 'format': 'YYYYMMDD'},
+        
+        # 람다2 (에이전트2) - 청구서/사용량 API
+        '/invoice/corp/monthly': {'required': ['billingPeriod'], 'format': 'YYYYMM'},
+        '/invoice/account/monthly': {'required': ['billingPeriod'], 'format': 'YYYYMM'},
+        '/usage/ondemand/monthly': {'required': ['from', 'to'], 'format': 'YYYYMM'},
+        '/usage/ondemand/daily': {'required': ['from', 'to'], 'format': 'YYYYMMDD'},
+        '/usage/ondemand/tags': {'required': ['beginDate', 'endDate'], 'format': 'YYYYMMDD'},
+    }
+    
+    # API 경로가 지정된 경우 해당 API의 필수 파라미터 검증
+    if api_path and api_path in api_requirements:
+        requirements = api_requirements[api_path]
+        required_params = requirements['required']
+        expected_format = requirements['format']
+        
+        # 필수 파라미터 존재 여부 확인
+        missing_params = []
+        for param in required_params:
+            if param not in params or not str(params[param]).strip():
+                missing_params.append(param)
+        
+        if missing_params:
+            warnings.append(f"필수 파라미터가 누락되었습니다: {', '.join(missing_params)}")
+            return warnings
+        
+        # 파라미터 형식 검증
+        for param in required_params:
+            param_value = str(params[param])
+            if expected_format == 'YYYYMM' and not (len(param_value) == 6 and param_value.isdigit()):
+                warnings.append(f"'{param}' 파라미터는 YYYYMM 형식(6자리 숫자)이어야 합니다: {param_value}")
+            elif expected_format == 'YYYYMMDD' and not (len(param_value) == 8 and param_value.isdigit()):
+                warnings.append(f"'{param}' 파라미터는 YYYYMMDD 형식(8자리 숫자)이어야 합니다: {param_value}")
+    
+    # billingPeriod 검증 (청구서 API용)
+    if 'billingPeriod' in params:
+        billing_period = str(params['billingPeriod'])
+        if len(billing_period) == 6:  # YYYYMM 형식
+            try:
+                year = int(billing_period[:4])
+                month = int(billing_period[4:])
+                current_year = current_info['current_year']
+                current_month = current_info['current_month']
+                
+                # 현재 월보다 이후 월만 미래로 간주 (같은 연도의 과거 월은 허용)
+                is_future_month = (year > current_year) or \
+                                (year == current_year and month > current_month)
+                
+                if is_future_month:
+                    warnings.append(f"요청하신 월이 미래입니다: {billing_period} (현재: {current_year}{current_month:02d})")
+                    
+            except ValueError as e:
+                warnings.append(f"billingPeriod 파싱 오류: {e}. 유효한 월 형식(YYYYMM)을 입력해주세요.")
+    
+    # from/to 파라미터 검증 (비용/사용량 API용)
     if 'from' in params and 'to' in params:
         from_str = str(params['from'])
         to_str = str(params['to'])
@@ -222,10 +282,30 @@ def validate_date_logic(params):
                     
         except ValueError as e:
             warnings.append(f"날짜 파싱 오류: {e}. 유효한 날짜 형식을 입력해주세요.")
-    else:
-        # from 또는 to 중 하나라도 없으면 경고 (smart_date_correction에서 기본값을 채웠어야 함)
-        if 'from' not in params or 'to' not in params:
-            warnings.append("조회를 위한 '시작 날짜' 및 '종료 날짜'가 모두 필요합니다.")
+    
+    # beginDate/endDate 파라미터 검증 (태그별 사용량 API용)
+    if 'beginDate' in params and 'endDate' in params:
+        begin_str = str(params['beginDate'])
+        end_str = str(params['endDate'])
+        
+        try:
+            if len(begin_str) == 8 and len(end_str) == 8:  # YYYYMMDD 형식
+                begin_dt_obj = datetime.strptime(begin_str, '%Y%m%d').date()
+                end_dt_obj = datetime.strptime(end_str, '%Y%m%d').date()
+                
+                # 조회 기간 시작일이 종료일보다 늦을 경우
+                if begin_dt_obj > end_dt_obj:
+                    warnings.append("조회 시작일이 종료일보다 늦습니다.")
+
+                # 시작 날짜 또는 종료 날짜가 오늘보다 미래인 경우
+                if begin_dt_obj > current_date_only or end_dt_obj > current_date_only:
+                    warnings.append(f"요청하신 날짜가 미래입니다: {begin_str} - {end_str}")
+            else:
+                warnings.append("날짜 형식이 올바르지 않습니다 (YYYYMMDD).")
+                return warnings
+                    
+        except ValueError as e:
+            warnings.append(f"날짜 파싱 오류: {e}. 유효한 날짜 형식을 입력해주세요.")
 
     if warnings:
         print(f"⚠️ 날짜 검증 경고: {warnings}")
@@ -572,7 +652,12 @@ def lambda_handler(event, context):
         # ✨ 날짜 보정 로직 적용 ✨
         params = smart_date_correction(params)
         print(f"📝 보정 후 파라미터: {params}")
-        date_warnings = validate_date_logic(params)
+        
+        # API 경로 결정 후 날짜 검증 (API 경로별 필수 파라미터 검증을 위해)
+        target_api_path = determine_api_path(params)
+        print(f"🔍 결정된 API 경로: {target_api_path}")
+        
+        date_warnings = validate_date_logic(params, target_api_path)
         if date_warnings:
             print(f"DEBUG: 날짜 유효성 검증 경고: {date_warnings}")
             # 400 Bad Request로 응답하여 Agent가 재요청하거나 사용자에게 알리도록 함
