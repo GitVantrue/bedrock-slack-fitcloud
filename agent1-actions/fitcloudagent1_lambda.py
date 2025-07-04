@@ -320,8 +320,17 @@ def process_fitcloud_response(response_data, api_path):
 
         if code == 200:
             # 비용 조회 API의 경우 body가 cost_items를 포함함
-            if api_path.startswith('/costs/ondemand/'):
-                return {"success": True, "cost_items": body, "message": message, "code": code}
+            if api_path.startswith('/costs/ondemand/') or api_path.startswith('/usage/ondemand/'):
+                cost_items = body if isinstance(body, list) else []
+                # 월 정보 추출
+                month_str = ''
+                if cost_items and 'monthlyDate' in cost_items[0]:
+                    month_str = cost_items[0]['monthlyDate'][:6]
+                elif cost_items and 'billingPeriod' in cost_items[0]:
+                    month_str = cost_items[0]['billingPeriod']
+                # 자연어 요약 메시지 생성
+                summary_msg = summarize_cost_items(cost_items, month_str)
+                return {"success": True, "cost_items": cost_items, "message": summary_msg, "code": code}
             else: # 일반적인 body 데이터 (인보이스 등)
                 return {"success": True, "data": body, "message": message, "code": code}
         elif code in [203, 204]: 
@@ -502,9 +511,10 @@ def process_invoice_response(raw_data, billing_period, account_id=None):
             "viewIndex": item.get("viewIndex", "")
         })
         total_invoice_fee_usd += fee_usd
+    summary_msg = summarize_invoice_items(invoice_items, billing_period)
     return {
         "success": True,
-        "message": message or "조회가 완료되었습니다.",
+        "message": summary_msg,
         "billingPeriod": billing_period,
         **({"accountId": account_id} if account_id else {}),
         "invoice_items": invoice_items,
@@ -565,6 +575,60 @@ def process_usage_response(raw_data, from_period, to_period, is_daily=False, is_
         "item_count": len(items)
     }
 
+def summarize_cost_items(cost_items, month_str, account_names=None):
+    if not cost_items:
+        return f"{month_str} 온디맨드 사용 데이터가 없습니다."
+    total = sum(item.get('usageFeeUSD', item.get('onDemandCost', 0.0)) for item in cost_items)
+    from collections import defaultdict
+    service_sum = defaultdict(float)
+    for item in cost_items:
+        service = item.get('serviceName', '기타')
+        val = item.get('usageFeeUSD', item.get('onDemandCost', 0.0))
+        service_sum[service] += val
+    top_services = sorted(service_sum.items(), key=lambda x: abs(x[1]), reverse=True)[:8]
+    etc = total - sum(x[1] for x in top_services)
+    msg = f":bar_chart: **{month_str} 총 사용량: ${total:,.2f}**\n"
+    msg += "**주요 서비스별 사용량:**\n"
+    for name, val in top_services:
+        percent = val / total * 100 if total else 0
+        msg += f"- **{name}**: ${val:,.2f} ({percent:.1f}%)\n"
+    if etc > 0:
+        msg += f"- **기타 서비스**: ${etc:,.2f} ({etc/total*100:.1f}%)\n"
+    msg += "**주요 특징:**\n"
+    if top_services:
+        msg += f"- {top_services[0][0]}가 전체 사용량의 {top_services[0][1]/total*100:.1f}% 차지\n"
+    if account_names:
+        msg += f"- 전체 {len(account_names)}개 계정({', '.join(account_names)})의 통합 사용량\n"
+    msg += f"- 총 {len(cost_items)}개 비용 항목\n"
+    msg += "이는 할인이나 크레딧이 적용되기 전의 온디맨드 사용량입니다. 실제 청구 금액과는 차이가 있을 수 있습니다."
+    return msg
+
+def summarize_invoice_items(invoice_items, billing_period):
+    if not invoice_items:
+        return f"{billing_period[:4]}년 {int(billing_period[4:]):02d}월 청구 데이터가 없습니다."
+    total = sum(item['usageFeeUSD'] for item in invoice_items)
+    from collections import defaultdict
+    service_sum = defaultdict(float)
+    for item in invoice_items:
+        service = item.get('serviceName', '기타')
+        val = item.get('usageFeeUSD', 0.0)
+        service_sum[service] += val
+    top_services = sorted(service_sum.items(), key=lambda x: abs(x[1]), reverse=True)[:8]
+    etc = total - sum(x[1] for x in top_services)
+    msg = f":bar_chart: **{billing_period[:4]}년 {int(billing_period[4:]):02d}월 청구 총액: ${total:,.2f}**\n"
+    msg += "**주요 서비스별 청구 금액:**\n"
+    for name, val in top_services:
+        percent = val / total * 100 if total else 0
+        msg += f"- **{name}**: ${val:,.2f} ({percent:.1f}%)\n"
+    if etc > 0:
+        msg += f"- **기타 서비스**: ${etc:,.2f} ({etc/total*100:.1f}%)\n"
+    msg += "**주요 특징:**\n"
+    if top_services:
+        msg += f"- {top_services[0][0]}가 전체 청구 금액의 {top_services[0][1]/total*100:.1f}% 차지\n"
+    msg += f"- 총 {len(invoice_items)}개 청구 항목\n"
+    msg += "이 금액은 실제 결제 금액 기준의 최종 청구 내역을 포함합니다. 할인, 크레딧, RI, SP 등 모든 내역이 반영되어 있습니다."
+    return msg
+
 def determine_api_path(params):
     """
     파라미터 기반으로 올바른 API 경로 결정 (On-Demand 비용 조회용)
@@ -612,6 +676,7 @@ def extract_parameters(event):
     """이벤트에서 파라미터를 추출합니다."""
     params = {}
     session_current_year = None
+    session_current_month = None
     
     # Query Parameters (OpenAPI path parameters)
     if 'parameters' in event:
@@ -647,13 +712,19 @@ def extract_parameters(event):
         session_attrs = event['sessionAttributes']
         if 'current_year' in session_attrs:
             session_current_year = str(session_attrs['current_year'])
+        if 'current_month' in session_attrs:
+            session_current_month = str(session_attrs['current_month']).zfill(2)
     
-    # 현재 연도로 보정 (세션 연도가 잘못되어 있으면 현재 연도 사용)
+    # 현재 연도/월로 보정 (세션 연도가 잘못되어 있으면 현재 연도 사용)
     current_info = get_current_date_info()
     real_current_year = str(current_info['current_year'])
+    real_current_month = str(current_info['current_month']).zfill(2)
     if not session_current_year or session_current_year != real_current_year:
         session_current_year = real_current_year
         print(f"📅 세션 연도 보정: {session_current_year} → {real_current_year}")
+    if not session_current_month or session_current_month != real_current_month:
+        session_current_month = real_current_month
+        print(f"📅 세션 월 보정: {session_current_month} → {real_current_month}")
     
     # inputText에서 월 정보 추출
     input_text = event.get('inputText', '')
@@ -663,11 +734,11 @@ def extract_parameters(event):
         month_str = month_match.group(1).zfill(2)
         # API 경로에 따라 분기
         api_path = event.get('apiPath', '')
-        if api_path.startswith('/costs/ondemand/'):
-            # 비용 API는 from/to에 YYYYMM 세팅
+        if api_path.startswith('/costs/ondemand/') or api_path.startswith('/usage/ondemand/'):
+            # 비용/순수 온디맨드 API는 from/to에 YYYYMM 세팅
             params['from'] = f"{session_current_year}{month_str}"
             params['to'] = f"{session_current_year}{month_str}"
-            print(f"📅 inputText에서 월 추출(비용API): from={params['from']}, to={params['to']}")
+            print(f"📅 inputText에서 월 추출(비용/온디맨드API): from={params['from']}, to={params['to']}")
         elif api_path.startswith('/invoice/'):
             # 인보이스 API는 billingPeriod 세팅
             params['billingPeriod'] = f"{session_current_year}{month_str}"
