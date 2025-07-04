@@ -319,18 +319,27 @@ def process_fitcloud_response(response_data, api_path):
         body = response_data.get('body', []) # 데이터가 없으면 빈 리스트
 
         if code == 200:
-            # 비용 조회 API의 경우 body가 cost_items를 포함함
+            # 비용/순수 온디맨드/usage API의 경우 표 형태 요약 메시지 생성
             if api_path.startswith('/costs/ondemand/') or api_path.startswith('/usage/ondemand/'):
-                cost_items = body if isinstance(body, list) else []
-                # 월 정보 추출
+                items = []
+                if 'cost_items' in response_data:
+                    items = response_data['cost_items']
+                elif 'usage_items' in response_data:
+                    items = response_data['usage_items']
+                elif 'usage_tag_items' in response_data:
+                    items = response_data['usage_tag_items']
+                # 월/일 정보 추출
                 month_str = ''
-                if cost_items and 'monthlyDate' in cost_items[0]:
-                    month_str = cost_items[0]['monthlyDate'][:6]
-                elif cost_items and 'billingPeriod' in cost_items[0]:
-                    month_str = cost_items[0]['billingPeriod']
-                # 자연어 요약 메시지 생성
-                summary_msg = summarize_cost_items(cost_items, month_str)
-                return {"success": True, "cost_items": cost_items, "message": summary_msg, "code": code}
+                is_daily = False
+                if items and ('dailyDate' in items[0] or (items[0].get('date') and len(str(items[0].get('date'))) == 8)):
+                    is_daily = True
+                    month_str = str(items[0].get('date') or items[0].get('dailyDate') or '')[:6]
+                elif items and 'monthlyDate' in items[0]:
+                    month_str = items[0]['monthlyDate'][:6]
+                elif items and 'billingPeriod' in items[0]:
+                    month_str = items[0]['billingPeriod']
+                summary_msg = summarize_cost_items_table(items, month_str, is_daily=is_daily)
+                return {"success": True, "cost_items": items, "message": summary_msg, "code": code}
             else: # 일반적인 body 데이터 (인보이스 등)
                 return {"success": True, "data": body, "message": message, "code": code}
         elif code in [203, 204]: 
@@ -601,6 +610,53 @@ def summarize_cost_items(cost_items, month_str, account_names=None):
         msg += f"- 전체 {len(account_names)}개 계정({', '.join(account_names)})의 통합 사용량\n"
     msg += f"- 총 {len(cost_items)}개 비용 항목\n"
     msg += "이는 할인이나 크레딧이 적용되기 전의 온디맨드 사용량입니다. 실제 청구 금액과는 차이가 있을 수 있습니다."
+    return msg
+
+def summarize_cost_items_table(cost_items, month_str, account_names=None, is_daily=False):
+    if not cost_items:
+        return f"{month_str} 온디맨드 사용 데이터가 없습니다."
+    from collections import defaultdict
+    msg = ""
+    if is_daily:
+        # 일별 집계
+        date_service_sum = defaultdict(lambda: defaultdict(float))
+        date_total = defaultdict(float)
+        for item in cost_items:
+            date = item.get('date') or item.get('dailyDate') or item.get('monthlyDate') or item.get('billingPeriod', '')
+            service = item.get('serviceName', '기타')
+            val = item.get('usageFeeUSD', item.get('onDemandCost', 0.0))
+            date_service_sum[date][service] += val
+            date_total[date] += val
+        for date in sorted(date_service_sum.keys()):
+            total = date_total[date]
+            top_services = sorted(date_service_sum[date].items(), key=lambda x: abs(x[1]), reverse=True)[:8]
+            etc = total - sum(x[1] for x in top_services)
+            msg += f"\n#### {date} 일별 온디맨드 사용금액 상위 8개 서비스\n"
+            msg += "| 서비스명 | 금액(USD) | 비율(%) |\n|---|---:|---:|\n"
+            for name, val in top_services:
+                percent = val / total * 100 if total else 0
+                msg += f"| {name} | ${val:,.2f} | {percent:.1f}% |\n"
+            if etc > 0:
+                msg += f"| 기타 | ${etc:,.2f} | {etc/total*100:.1f}% |\n"
+            msg += f"| **총합** | **${total:,.2f}** | 100% |\n"
+    else:
+        # 월별/기존 방식
+        total = sum(item.get('usageFeeUSD', item.get('onDemandCost', 0.0)) for item in cost_items)
+        service_sum = defaultdict(float)
+        for item in cost_items:
+            service = item.get('serviceName', '기타')
+            val = item.get('usageFeeUSD', item.get('onDemandCost', 0.0))
+            service_sum[service] += val
+        top_services = sorted(service_sum.items(), key=lambda x: abs(x[1]), reverse=True)[:10]
+        etc = total - sum(x[1] for x in top_services)
+        msg = f"### {month_str} 온디맨드 사용금액 상위 10개 서비스\n"
+        msg += "| 서비스명 | 금액(USD) | 비율(%) |\n|---|---:|---:|\n"
+        for name, val in top_services:
+            percent = val / total * 100 if total else 0
+            msg += f"| {name} | ${val:,.2f} | {percent:.1f}% |\n"
+        if etc > 0:
+            msg += f"| 기타 | ${etc:,.2f} | {etc/total*100:.1f}% |\n"
+        msg += f"| **총합** | **${total:,.2f}** | 100% |\n"
     return msg
 
 def summarize_invoice_items(invoice_items, billing_period):
