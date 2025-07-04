@@ -645,11 +645,19 @@ def extract_parameters(event):
     input_text = event.get('inputText', '')
     import re
     month_match = re.search(r'([0-9]{1,2})월', input_text)
-    if month_match and not params.get('billingPeriod'):
+    if month_match:
         month_str = month_match.group(1).zfill(2)
-        params['billingPeriod'] = f"{session_current_year}{month_str}"
-        print(f"📅 inputText에서 월 추출: {params['billingPeriod']}")
-    
+        # API 경로에 따라 분기
+        api_path = event.get('apiPath', '')
+        if api_path.startswith('/costs/ondemand/'):
+            # 비용 API는 from/to에 YYYYMM 세팅
+            params['from'] = f"{session_current_year}{month_str}"
+            params['to'] = f"{session_current_year}{month_str}"
+            print(f"📅 inputText에서 월 추출(비용API): from={params['from']}, to={params['to']}")
+        elif api_path.startswith('/invoice/'):
+            # 인보이스 API는 billingPeriod 세팅
+            params['billingPeriod'] = f"{session_current_year}{month_str}"
+            print(f"📅 inputText에서 월 추출(인보이스API): billingPeriod={params['billingPeriod']}")
     # 월만 입력된 경우 보정
     for k, v in list(params.items()):
         if k in ['from', 'to', 'billingPeriod', 'beginDate', 'endDate']:
@@ -676,13 +684,22 @@ def lambda_handler(event, context):
     params = smart_date_correction(params)
     print(f"[DEBUG] 보정된 파라미터: {params}")
 
-    # billingPeriod가 있으면 from/to 제거 (중복 방지)
-    if 'billingPeriod' in params:
+    # 비용 API에서 billingPeriod → from/to 변환
+    if event.get('apiPath', '').startswith('/costs/ondemand/') and 'billingPeriod' in params:
+        # billingPeriod(YYYYMM) → from/to
+        bp = str(params['billingPeriod'])
+        if len(bp) == 6 and bp.isdigit():
+            params['from'] = bp
+            params['to'] = bp
+            print(f"[DEBUG] billingPeriod({bp}) → from/to 변환: from={bp}, to={bp}")
+        params.pop('billingPeriod')
+    # 인보이스 API만 billingPeriod 우선 적용
+    if event.get('apiPath', '').startswith('/invoice/') and 'billingPeriod' in params:
         if 'from' in params:
-            print(f"[DEBUG] billingPeriod 우선 적용: from({params['from']}) 제거")
+            print(f"[DEBUG] billingPeriod 우선 적용(인보이스): from({params['from']}) 제거")
             params.pop('from')
         if 'to' in params:
-            print(f"[DEBUG] billingPeriod 우선 적용: to({params['to']}) 제거")
+            print(f"[DEBUG] billingPeriod 우선 적용(인보이스): to({params['to']}) 제거")
             params.pop('to')
 
     input_text = event.get('inputText', '').lower()
@@ -783,7 +800,7 @@ def lambda_handler(event, context):
 
         elif target_api_path.startswith('/invoice/'):
             api_data = {'billingPeriod': params['billingPeriod']}
-            if 'accountId' in params:
+            if 'accountId' in params and params['accountId']:
                 api_data['accountId'] = params['accountId']
             url = f'{FITCLOUD_BASE_URL}{target_api_path}'
             print(f"[REQUEST] POST {url}")
