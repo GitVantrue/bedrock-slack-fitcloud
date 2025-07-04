@@ -787,17 +787,24 @@ def extract_parameters(event):
     # 일자 범위(1~5일 등) 추출
     day_range_match = re.search(r'([0-9]{1,2})[일\.]?\s*~\s*([0-9]{1,2})[일\.]?', input_text)
     month_match = re.search(r'([0-9]{1,2})월', input_text)
+    api_path = event.get('apiPath', '')
     if month_match and day_range_match:
         # ex: 5월 1~5일 → from: 20250501, to: 20250505
         month_str = month_match.group(1).zfill(2)
         from_day = day_range_match.group(1).zfill(2)
         to_day = day_range_match.group(2).zfill(2)
-        params['from'] = f"{session_current_year}{month_str}{from_day}"
-        params['to'] = f"{session_current_year}{month_str}{to_day}"
-        print(f"📅 inputText에서 일자 범위 추출: from={params['from']}, to={params['to']}")
+        yyyymmdd_from = f"{session_current_year}{month_str}{from_day}"
+        yyyymmdd_to = f"{session_current_year}{month_str}{to_day}"
+        if api_path.startswith('/usage/ondemand/tags'):
+            params['beginDate'] = yyyymmdd_from
+            params['endDate'] = yyyymmdd_to
+            print(f"📅 inputText에서 태그 일자 범위 추출: beginDate={params['beginDate']}, endDate={params['endDate']}")
+        else:
+            params['from'] = yyyymmdd_from
+            params['to'] = yyyymmdd_to
+            print(f"📅 inputText에서 일자 범위 추출: from={params['from']}, to={params['to']}")
     elif month_match:
         month_str = month_match.group(1).zfill(2)
-        api_path = event.get('apiPath', '')
         if api_path.startswith('/costs/ondemand/') or api_path.startswith('/usage/ondemand/'):
             params['from'] = f"{session_current_year}{month_str}"
             params['to'] = f"{session_current_year}{month_str}"
@@ -830,76 +837,51 @@ def lambda_handler(event, context):
     print(f"[DEBUG] 추출된 파라미터: {params}")
     params = smart_date_correction(params)
     print(f"[DEBUG] 보정된 파라미터: {params}")
-
-    # 비용 API에서 billingPeriod → from/to 변환
-    if event.get('apiPath', '').startswith('/costs/ondemand/') and 'billingPeriod' in params:
-        # billingPeriod(YYYYMM) → from/to
-        bp = str(params['billingPeriod'])
-        if len(bp) == 6 and bp.isdigit():
-            params['from'] = bp
-            params['to'] = bp
-            print(f"[DEBUG] billingPeriod({bp}) → from/to 변환: from={bp}, to={bp}")
-        params.pop('billingPeriod')
-    # 인보이스 API만 billingPeriod 우선 적용
-    if event.get('apiPath', '').startswith('/invoice/') and 'billingPeriod' in params:
-        if 'from' in params:
-            print(f"[DEBUG] billingPeriod 우선 적용(인보이스): from({params['from']}) 제거")
-            params.pop('from')
-        if 'to' in params:
-            print(f"[DEBUG] billingPeriod 우선 적용(인보이스): to({params['to']}) 제거")
-            params.pop('to')
-
     input_text = event.get('inputText', '').lower()
     api_path_from_event = event.get('apiPath', '')
 
-    # 비용/온디맨드 API에서 from/to 길이에 따라 daily/monthly 분기
-    if api_path_from_event.startswith('/costs/ondemand/') or api_path_from_event.startswith('/usage/ondemand/'):
-        if 'from' in params and len(str(params['from'])) == 8:
-            api_path_from_event = api_path_from_event.replace('monthly', 'daily')
-            print(f"[DEBUG] from/to 8자리: daily API로 분기 → {api_path_from_event}")
-        elif 'from' in params and len(str(params['from'])) == 6:
-            api_path_from_event = api_path_from_event.replace('daily', 'monthly')
-            print(f"[DEBUG] from/to 6자리: monthly API로 분기 → {api_path_from_event}")
-
-    # 2. 사용자 의도/지침서 기반 API 분기
-    is_invoice_request = any(k in input_text for k in ['청구서', 'invoice', '인보이스', '최종 청구 금액', '실제 결제 금액', '실제 지불 금액'])
-    is_usage_request = any(k in input_text for k in ['순수 온디맨드', '순수 사용량', '할인 미적용', 'ri/sp 제외', '원가 기준', '할인 금액이 포함되지 않은', '할인 전 금액', '정가 기준', 'pure usage'])
-    is_tag_usage = '태그' in input_text or 'tag' in input_text
-    has_account = 'accountId' in params or 'accountName' in params or any(k in input_text for k in ['계정', 'account', '개발계정', 'dev'])
-
-    # 3. API 경로 결정 (지침서/오픈스키마 기준)
-    target_api_path = None
-    api_type = None
-    if api_path_from_event == '/accounts':
-        target_api_path = '/accounts'
-        api_type = 'accounts'
-    elif is_invoice_request:
-        if has_account:
-            target_api_path = '/invoice/account/monthly'
-            api_type = 'invoice_account'
-        else:
-            target_api_path = '/invoice/corp/monthly'
-            api_type = 'invoice_corp'
-    elif is_usage_request:
-        if is_tag_usage:
-            target_api_path = '/usage/ondemand/tags'
-            api_type = 'usage_tag'
-        else:
-            # 월/일 구분
-            if 'from' in params and len(str(params['from'])) == 8:
-                target_api_path = '/usage/ondemand/daily'
-                api_type = 'usage_daily'
-            else:
-                target_api_path = '/usage/ondemand/monthly'
-                api_type = 'usage_monthly'
+    # 태그 API 우선 분기
+    if 'beginDate' in params and 'endDate' in params:
+        target_api_path = '/usage/ondemand/tags'
+        api_type = 'usage_tag'
+        print(f"[DEBUG] 태그 API 분기: {target_api_path}")
     else:
-        # 기본 비용(costs) API
-        if 'from' in params and len(str(params['from'])) == 8:
-            target_api_path = '/costs/ondemand/account/daily' if has_account else '/costs/ondemand/corp/daily'
-            api_type = 'costs_daily'
+        # 이하 기존 분기 로직 유지
+        # 2. 사용자 의도/지침서 기반 API 분기
+        is_invoice_request = any(k in input_text for k in ['청구서', 'invoice', '인보이스', '최종 청구 금액', '실제 결제 금액', '실제 지불 금액'])
+        is_usage_request = any(k in input_text for k in ['순수 온디맨드', '순수 사용량', '할인 미적용', 'ri/sp 제외', '원가 기준', '할인 금액이 포함되지 않은', '할인 전 금액', '정가 기준', 'pure usage'])
+        is_tag_usage = '태그' in input_text or 'tag' in input_text
+        has_account = 'accountId' in params or 'accountName' in params or any(k in input_text for k in ['계정', 'account', '개발계정', 'dev'])
+        target_api_path = None
+        api_type = None
+        if api_path_from_event == '/accounts':
+            target_api_path = '/accounts'
+            api_type = 'accounts'
+        elif is_invoice_request:
+            if has_account:
+                target_api_path = '/invoice/account/monthly'
+                api_type = 'invoice_account'
+            else:
+                target_api_path = '/invoice/corp/monthly'
+                api_type = 'invoice_corp'
+        elif is_usage_request:
+            if is_tag_usage:
+                target_api_path = '/usage/ondemand/tags'
+                api_type = 'usage_tag'
+            else:
+                if 'from' in params and len(str(params['from'])) == 8:
+                    target_api_path = '/usage/ondemand/daily'
+                    api_type = 'usage_daily'
+                else:
+                    target_api_path = '/usage/ondemand/monthly'
+                    api_type = 'usage_monthly'
         else:
-            target_api_path = '/costs/ondemand/account/monthly' if has_account else '/costs/ondemand/corp/monthly'
-            api_type = 'costs_monthly'
+            if 'from' in params and len(str(params['from'])) == 8:
+                target_api_path = '/costs/ondemand/account/daily' if has_account else '/costs/ondemand/corp/daily'
+                api_type = 'costs_daily'
+            else:
+                target_api_path = '/costs/ondemand/account/monthly' if has_account else '/costs/ondemand/corp/monthly'
+                api_type = 'costs_monthly'
 
     print(f"[DEBUG] API 분기: {target_api_path} ({api_type})")
 
@@ -969,19 +951,23 @@ def lambda_handler(event, context):
             processed_data_wrapper = process_invoice_response(raw_data, params['billingPeriod'], params.get('accountId'))
             return create_bedrock_response(event, 200, processed_data_wrapper)
 
+        elif target_api_path == '/usage/ondemand/tags':
+            api_data = {}
+            if 'beginDate' in params: api_data['beginDate'] = params['beginDate']
+            if 'endDate' in params: api_data['endDate'] = params['endDate']
+            url = f'{FITCLOUD_BASE_URL}{target_api_path}'
+            print(f"[REQUEST] POST {url}")
+            print(f"[REQUEST] headers: {headers}")
+            print(f"[REQUEST] data: {api_data}")
+            response = session.post(url, headers=headers, data=api_data, timeout=60)
+            print(f"[RESPONSE] status_code: {response.status_code}")
+            print(f"[RESPONSE] body: {str(response.text)[:500]}")
+            raw_data = response.json()
+            processed_data_wrapper = process_usage_response(raw_data, params.get('beginDate'), params.get('endDate'), is_tag=True)
+            return create_bedrock_response(event, 200, processed_data_wrapper)
+
         elif target_api_path.startswith('/usage/ondemand/'):
-            if api_type == 'usage_tag':
-                api_data = {'beginDate': params['beginDate'], 'endDate': params['endDate']}
-                url = f'{FITCLOUD_BASE_URL}{target_api_path}'
-                print(f"[REQUEST] POST {url}")
-                print(f"[REQUEST] headers: {headers}")
-                print(f"[REQUEST] data: {api_data}")
-                response = session.post(url, headers=headers, data=api_data, timeout=60)
-                print(f"[RESPONSE] status_code: {response.status_code}")
-                print(f"[RESPONSE] body: {str(response.text)[:500]}")
-                raw_data = response.json()
-                processed_data_wrapper = process_usage_response(raw_data, params['beginDate'], params['endDate'], is_tag=True)
-            elif api_type == 'usage_daily':
+            if api_type == 'usage_daily':
                 api_data = {'from': params['from'], 'to': params['to']}
                 url = f'{FITCLOUD_BASE_URL}{target_api_path}'
                 print(f"[REQUEST] POST {url}")
