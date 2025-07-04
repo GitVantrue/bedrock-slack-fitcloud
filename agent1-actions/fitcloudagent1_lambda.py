@@ -542,11 +542,12 @@ def extract_parameters(event):
         if 'current_year' in session_attrs:
             session_current_year = str(session_attrs['current_year'])
     
-    # 현재 연도로 보정
+    # 현재 연도로 보정 (세션 연도가 잘못되어 있으면 현재 연도 사용)
     current_info = get_current_date_info()
     real_current_year = str(current_info['current_year'])
     if not session_current_year or session_current_year != real_current_year:
         session_current_year = real_current_year
+        print(f"📅 세션 연도 보정: {session_current_year} → {real_current_year}")
     
     # inputText에서 월 정보 추출
     input_text = event.get('inputText', '')
@@ -691,7 +692,11 @@ def lambda_handler(event, context):
                 print(f"DEBUG: 청구서 요청 감지 → {target_api_path}")
             else:
                 # 기본적으로는 비용(costs) API로 처리
-                target_api_path = determine_api_path(params)
+                # 계정 정보가 있으면 계정 API로, 없으면 법인 API로
+                if user_intent['has_account']:
+                    target_api_path = '/costs/ondemand/account/monthly'
+                else:
+                    target_api_path = '/costs/ondemand/corp/monthly'
                 print(f"DEBUG: 기본 비용 API 경로 결정: {target_api_path}")
 
         # 토큰 획득
