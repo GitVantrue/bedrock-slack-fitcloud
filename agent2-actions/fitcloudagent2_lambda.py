@@ -522,6 +522,14 @@ def lambda_handler(event, context):
         params = extract_parameters(event)
         print(f"📝 추출된 파라미터: {params}")
         
+        # billingPeriod를 from/to로 변환 (월별 API용)
+        if 'billingPeriod' in params and not ('from' in params and 'to' in params):
+            billing_period = str(params['billingPeriod'])
+            if len(billing_period) == 6:  # YYYYMM 형식
+                params['from'] = billing_period
+                params['to'] = billing_period
+                print(f"🔄 billingPeriod를 from/to로 변환: {billing_period} → from={params['from']}, to={params['to']}")
+        
         # ✨ 날짜 검증 로직 적용 ✨
         date_warnings = validate_date_logic(params, api_path_from_event)
         if date_warnings:
