@@ -572,15 +572,26 @@ def process_usage_response(raw_data, from_period, to_period, is_daily=False, is_
                 "onDemandCost": on_demand_cost,
                 "billingEntity": item.get("billingEntity"),
                 "serviceName": item.get("serviceName"),
+                # 일별/월별 구분을 위해 date 필드 추가
+                "date": item.get("date") or item.get("dailyDate") or item.get("monthlyDate") or item.get("billingPeriod")
             }
             items.append(processed_item)
             total_on_demand_cost += on_demand_cost
         except Exception:
             continue
     key = "usage_tag_items" if is_tag else "usage_items"
+    # 요약/분석 메시지 생성
+    month_str = ''
+    if items and ('dailyDate' in items[0] or (items[0].get('date') and len(str(items[0].get('date'))) == 8)):
+        month_str = str(items[0].get('date') or items[0].get('dailyDate') or '')[:6]
+    elif items and 'monthlyDate' in items[0]:
+        month_str = items[0]['monthlyDate'][:6]
+    elif items and 'billingPeriod' in items[0]:
+        month_str = items[0]['billingPeriod']
+    summary_msg = summarize_cost_items_table(items, month_str, is_daily=is_daily)
     return {
         "success": True,
-        "message": message or "조회가 완료되었습니다.",
+        "message": summary_msg,
         "from": from_period,
         "to": to_period,
         key: items,
