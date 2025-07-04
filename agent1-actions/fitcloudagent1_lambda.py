@@ -515,10 +515,13 @@ def create_bedrock_response(event, status_code=200, response_data=None, error_me
 def determine_api_path(params):
     """
     파라미터 기반으로 올바른 API 경로 결정 (On-Demand 비용 조회용)
-    우선순위: accountId 존재 여부 → 시간 단위 (daily/monthly)
+    우선순위: billingPeriod 존재 여부 → accountId 존재 여부 → 시간 단위 (daily/monthly)
     """
     
-    # 1단계: accountId 존재 여부 먼저 확인
+    # 0단계: billingPeriod 존재 여부 확인 (월별 API 우선)
+    has_billing_period = 'billingPeriod' in params and params['billingPeriod'] and str(params['billingPeriod']).strip() != '' and str(params['billingPeriod']).strip().lower() != 'none'
+    
+    # 1단계: accountId 존재 여부 확인
     has_account_id = 'accountId' in params and params['accountId'] and str(params['accountId']).strip() != '' and str(params['accountId']).strip().lower() != 'none'
     
     # 2단계: 시간 단위 확인 (날짜 형식으로 판단)
@@ -532,11 +535,22 @@ def determine_api_path(params):
             date_format = 'monthly'
     
     print(f"🔍 API 경로 결정 로직:")
+    print(f"  - billingPeriod 존재: {has_billing_period} (값: '{params.get('billingPeriod')}')")
     print(f"  - accountId 존재: {has_account_id} (값: '{params.get('accountId')}')")
     print(f"  - from 값: '{params.get('from', '없음')}'")
     print(f"  - 판단된 날짜 형식: {date_format}")
     
     # 3단계: API 경로 결정
+    # billingPeriod가 있으면 무조건 월별 API로 결정
+    if has_billing_period:
+        if has_account_id:
+            print("✅ billingPeriod + accountId → 계정별 월별 API")
+            return '/costs/ondemand/account/monthly'
+        else:
+            print("✅ billingPeriod만 있음 → 법인 월별 API")
+            return '/costs/ondemand/corp/monthly'
+    
+    # billingPeriod가 없는 경우 기존 로직
     if has_account_id:
         if date_format == 'daily':
             return '/costs/ondemand/account/daily'
@@ -653,6 +667,14 @@ def lambda_handler(event, context):
         params = smart_date_correction(params)
         print(f"📝 보정 후 파라미터: {params}")
         
+        # billingPeriod를 from/to로 변환 (월별 API용)
+        if 'billingPeriod' in params and not ('from' in params and 'to' in params):
+            billing_period = str(params['billingPeriod'])
+            if len(billing_period) == 6:  # YYYYMM 형식
+                params['from'] = billing_period
+                params['to'] = billing_period
+                print(f"🔄 billingPeriod를 from/to로 변환: {billing_period} → from={params['from']}, to={params['to']}")
+        
         # API 경로 결정 후 날짜 검증 (API 경로별 필수 파라미터 검증을 위해)
         target_api_path = determine_api_path(params)
         print(f"🔍 결정된 API 경로: {target_api_path}")
@@ -701,6 +723,11 @@ def lambda_handler(event, context):
         
         # 1. 계정 목록 조회는 그대로 처리
         if api_path_from_event == '/accounts':
+            target_api_path = '/accounts'
+            
+        # 2. 계정 정보가 필요한 경우 먼저 계정 목록 조회
+        elif target_api_path and 'account' in target_api_path and not params.get('accountId'):
+            print("🔍 계정 정보가 필요하지만 accountId가 없음. 계정 목록을 먼저 조회합니다.")
             target_api_path = '/accounts'
             
         # 2. 비용 관련 API는 그대로 처리
