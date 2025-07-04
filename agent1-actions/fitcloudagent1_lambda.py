@@ -136,7 +136,11 @@ def validate_date_logic(params, api_path=None):
         requirements = api_requirements[api_path]
         required_params = requirements['required']
         expected_format = requirements['format']
-        
+
+        # billingPeriod가 있으면 from/to 필수 체크 생략
+        if api_path in ['/costs/ondemand/account/monthly', '/costs/ondemand/corp/monthly'] and 'billingPeriod' in params:
+            required_params = [p for p in required_params if p not in ['from', 'to']]
+
         # 필수 파라미터 존재 여부 확인
         missing_params = []
         for param in required_params:
