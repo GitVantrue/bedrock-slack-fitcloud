@@ -147,10 +147,14 @@ def validate_date_logic(params, api_path=None):
             warnings.append(f"필수 파라미터가 누락되었습니다: {', '.join(missing_params)}")
             return warnings
         
-        # 파라미터 형식 검증
+        # 파라미터 형식 검증 (accountId는 별도 처리)
         for param in required_params:
             param_value = str(params[param])
-            if expected_format == 'YYYYMM' and not (len(param_value) == 6 and param_value.isdigit()):
+            if param == 'accountId':
+                import re
+                if not re.match(r'^[0-9]{12}$', param_value):
+                    warnings.append(f"'accountId' 파라미터는 12자리 숫자여야 합니다: {param_value}")
+            elif expected_format == 'YYYYMM' and not (len(param_value) == 6 and param_value.isdigit()):
                 warnings.append(f"'{param}' 파라미터는 YYYYMM 형식(6자리 숫자)이어야 합니다: {param_value}")
             elif expected_format == 'YYYYMMDD' and not (len(param_value) == 8 and param_value.isdigit()):
                 warnings.append(f"'{param}' 파라미터는 YYYYMMDD 형식(8자리 숫자)이어야 합니다: {param_value}")
