@@ -328,6 +328,8 @@ def process_fitcloud_response(response_data, api_path):
                     items = response_data['usage_items']
                 elif 'usage_tag_items' in response_data:
                     items = response_data['usage_tag_items']
+                elif isinstance(body, list):
+                    items = body
                 # 월/일 정보 추출
                 month_str = ''
                 is_daily = False
