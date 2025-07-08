@@ -65,6 +65,19 @@ jobs:
               echo "✅ action_group_quick_start_fcg5f-plzem 배포 완료!"
             fi
           fi
+          # Supervisor(Agent0) Actions 배포
+          if echo "$CHANGED_FILES" | grep -q "supervisor/" || [ "$CHANGED_FILES" = "all" ]; then
+            if [ -d "supervisor" ]; then
+              echo "supervisor 폴더 변경 감지 - 배포 시작"
+              cd supervisor
+              zip -r ../supervisor.zip . -x "*.pyc" "__pycache__/*"
+              cd ..
+              aws lambda update-function-code \
+                --function-name supervisorAgent0ActionGrp250708 \
+                --zip-file fileb://supervisor.zip
+              echo "✅ supervisorAgent0ActionGrp250708 배포 완료!"
+            fi
+          fi
         elif [ "$BRANCH_NAME" = "unify" ]; then
           # unify 브랜치: agent1-actions만 배포
           if echo "$CHANGED_FILES" | grep -q "agent1-actions/" || [ "$CHANGED_FILES" = "all" ]; then
