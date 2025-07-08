@@ -1,4 +1,6 @@
 
+import json
+import boto3
 import logging
 from typing import Dict, Any
 from http import HTTPStatus
@@ -8,55 +10,25 @@ logger.setLevel(logging.INFO)
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
-    AWS Lambda handler for processing Bedrock agent requests.
-    
-    Args:
-        event (Dict[str, Any]): The Lambda event containing action details
-        context (Any): The Lambda context object
-    
-    Returns:
-        Dict[str, Any]: Response containing the action execution results
-    
-    Raises:
-        KeyError: If required fields are missing from the event
+    Agent0(슈퍼바이저) 람다: 무조건 Agent1(람다1)로만 위임하는 구조
     """
     try:
-        action_group = event['actionGroup']
-        function = event['function']
-        message_version = event.get('messageVersion',1)
-        parameters = event.get('parameters', [])
+        # Agent1 람다 함수명 (AWS Lambda 콘솔의 실제 함수명으로 맞춰주세요)
+        agent1_lambda_name = "fitcloudagent1_lambda"  # 실제 함수명으로 변경 필요
 
-        # Execute your business logic here. For more information, 
-        # refer to: https://docs.aws.amazon.com/bedrock/latest/userguide/agents-lambda.html
-        response_body = {
-            'TEXT': {
-                'body': f'The function {function} was called successfully with parameters: {parameters}!'
-            }
-        }
-        action_response = {
-            'actionGroup': action_group,
-            'function': function,
-            'functionResponse': {
-                'responseBody': response_body
-            }
-        }
-        response = {
-            'response': action_response,
-            'messageVersion': message_version
-        }
+        logger.info(f"[Agent0] Agent1({agent1_lambda_name})로 위임 시작")
+        client = boto3.client("lambda")
+        response = client.invoke(
+            FunctionName=agent1_lambda_name,
+            Payload=json.dumps(event)
+        )
+        result = json.load(response['Payload'])
+        logger.info(f"[Agent0] Agent1 응답: {result}")
+        return result
 
-        logger.info('Response: %s', response)
-        return response
-
-    except KeyError as e:
-        logger.error('Missing required field: %s', str(e))
-        return {
-            'statusCode': HTTPStatus.BAD_REQUEST,
-            'body': f'Error: {str(e)}'
-        }
     except Exception as e:
-        logger.error('Unexpected error: %s', str(e))
+        logger.error(f"[Agent0] Agent1 위임 중 오류: {e}", exc_info=True)
         return {
             'statusCode': HTTPStatus.INTERNAL_SERVER_ERROR,
-            'body': 'Internal server error'
+            'body': f'Agent0에서 Agent1 호출 중 오류: {str(e)}'
         }
