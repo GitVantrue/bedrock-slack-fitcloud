@@ -437,18 +437,15 @@ def create_bedrock_response(event, status_code=200, response_data=None, error_me
             is_account_level = response_data.get("scope") == "account"
             for item in response_data["cost_items"]:
                 try:
-                    # USD 기준으로만 금액 집계
-                    cost_usd = float(item.get('usageFee', 0.0))
+                    cost_usd = float(item.get('usageFeeUSD', item.get('usageFee', 0.0)))
                     cost_item = {
                         "serviceName": item.get('serviceName', '알 수 없음'),
-                        "usageFeeUSD": round(cost_usd, 2) # 소수점 둘째 자리까지 반올림
+                        "usageFeeUSD": round(cost_usd, 2)
                     }
-                    # 날짜 필드 추가 (일별/월별 구분)
                     if is_daily:
-                        cost_item["date"] = item.get('dailyDate')
+                        cost_item["date"] = item.get('date') or item.get('dailyDate')
                     else:
-                        cost_item["date"] = item.get('monthlyDate')
-                    # 계정별 조회인 경우 계정 정보 추가
+                        cost_item["date"] = item.get('date') or item.get('monthlyDate')
                     if is_account_level:
                         cost_item["accountId"] = item.get('accountId', 'N/A')
                         cost_item["accountName"] = item.get('accountName', '알 수 없음')
@@ -460,8 +457,20 @@ def create_bedrock_response(event, status_code=200, response_data=None, error_me
             final_data["cost_type"] = response_data.get("cost_type")
             final_data["scope"] = response_data.get("scope")
             final_data["cost_items"] = cost_items
-            final_data["total_cost_usd"] = round(total_cost_sum_usd, 2) # USD 총합
+            final_data["total_cost_usd"] = round(total_cost_sum_usd, 2)
             final_data["item_count"] = len(cost_items)
+            # from/to 값에서 월 정보 추출
+            month_str = None
+            if "from" in response_data:
+                month_str = str(response_data["from"])
+            elif "to" in response_data:
+                month_str = str(response_data["to"])
+            elif cost_items and cost_items[0].get("date"):
+                month_str = str(cost_items[0]["date"])[:6]
+            else:
+                month_str = ""
+            # 슬랙에 보기 좋게 포맷
+            final_data["message"] = summarize_cost_items_table(cost_items, month_str, is_daily=is_daily)
             if not cost_items:
                 final_data["message"] = f"조회된 비용 데이터가 없습니다."
                 final_data["total_cost_usd"] = 0.0
@@ -570,6 +579,13 @@ def summarize_cost_items_table(cost_items, month_str, account_names=None, is_dai
         return f"{month_str} 온디맨드 사용 데이터가 없습니다."
     from collections import defaultdict
     msg = ""
+    # 월 정보가 YYYYMM이면 YYYY년 MM월로 포맷
+    if len(month_str) == 6:
+        month_fmt = f"{month_str[:4]}년 {int(month_str[4:]):02d}월"
+    else:
+        month_fmt = month_str
+    msg += f"\n*━━━━━━━━━━━━━━━━━━━━━━*\n"
+    msg += f"*📅 {month_fmt} AWS 법인 전체 요금*\n"
     if is_daily:
         # 일별 집계
         date_service_sum = defaultdict(lambda: defaultdict(float))
@@ -604,23 +620,23 @@ def summarize_cost_items_table(cost_items, month_str, account_names=None, is_dai
             service = item.get('serviceName', '기타')
             val = item.get('usageFeeUSD', item.get('onDemandCost', 0.0))
             service_sum[service] += val
-        top_services = sorted(service_sum.items(), key=lambda x: abs(x[1]), reverse=True)[:10]
+        top_services = sorted(service_sum.items(), key=lambda x: abs(x[1]), reverse=True)[:8]
         etc = total - sum(x[1] for x in top_services)
-        # 월 정보가 YYYYMM 또는 YYYY-MM 형태면 YYYY년 MM월로 포맷
-        month_fmt = month_str
-        if len(month_str) == 6:
-            month_fmt = f"{month_str[:4]}년 {int(month_str[4:]):02d}월"
-        elif len(month_str) == 7 and '-' in month_str:
-            y, m = month_str.split('-')
-            month_fmt = f"{y}년 {int(m):02d}월"
-        msg = f"### {month_fmt} 온디맨드 사용금액 상위 10개 서비스\n"
-        msg += "| 서비스명 | 금액(USD) | 비율(%) |\n|---|---:|---:|\n"
-        for name, val in top_services:
+        msg += f"\n:moneybag: *총 온디맨드 사용금액: ${total:,.2f}*\n"
+        msg += f"*주요 서비스별 사용금액 (상위 8개)*\n"
+        for idx, (name, val) in enumerate(top_services, 1):
             percent = val / total * 100 if total else 0
-            msg += f"| {name} | ${val:,.2f} | {percent:.1f}% |\n"
+            msg += f"{idx}. *{name}*: 약 ${val:,.0f} ({percent:.1f}%)\n"
         if etc > 0:
-            msg += f"| 기타 | ${etc:,.2f} | {etc/total*100:.1f}% |\n"
-        msg += f"| **총합** | **${total:,.2f}** | 100% |\n"
+            msg += f"- 기타 서비스: 약 ${etc:,.0f} ({etc/total*100:.1f}%)\n"
+        msg += "\n*━━━━━━━━━━━━━━━━━━━━━━*\n"
+        msg += ":bulb: *분석 포인트*\n"
+        if top_services:
+            msg += f"- *{top_services[0][0]}*가 전체 비용의 약 {top_services[0][1]/total*100:.1f}% 차지\n"
+        if account_names:
+            msg += f"- 전체 {len(account_names)}개 계정({', '.join(account_names)})의 통합 사용량\n"
+        msg += f"- 총 {len(cost_items)}개 비용 항목\n"
+        msg += "이는 순수 온디맨드 사용금액 기준이며, 실제 청구 금액(인보이스)과는 차이가 있을 수 있습니다. :chart_with_upwards_trend:"
     return msg
 
 def summarize_invoice_items(invoice_items, billing_period):
