@@ -201,6 +201,7 @@ def lambda_handler(event, context):
 
             logger.info(f"Invoking Bedrock Agent with text: '{text_for_agent}' for session: '{session_id}' "
                         f"with current_date: {current_date_str}, current_year: {current_year_str}")
+            logger.info(f"[DEBUG][slackwebhook] sessionAttributes 전달: current_year={current_year_str}, current_date={current_date_str}")
 
             response = bedrock_agent_client.invoke_agent(
                 agentId=agent_id,

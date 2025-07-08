@@ -958,6 +958,9 @@ def process_invoice_response(raw_data, billing_period, account_id=None):
 def lambda_handler(event, context):
     print(f"🚀 통합 Lambda 시작: {event.get('apiPath', 'N/A')}")
     print(f"[DEBUG] Raw event: {json.dumps(event, ensure_ascii=False)[:1000]}")
+    # sessionAttributes 값 로그로 출력
+    if 'sessionAttributes' in event:
+        print(f"[DEBUG][lambda] 전달받은 sessionAttributes: {json.dumps(event['sessionAttributes'], ensure_ascii=False)}")
 
     # 1. 파라미터 추출 및 보정
     params = extract_parameters(event)
