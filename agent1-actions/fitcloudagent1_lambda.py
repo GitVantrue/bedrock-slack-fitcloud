@@ -978,18 +978,33 @@ def lambda_handler(event, context):
                 target_api_path = '/usage/ondemand/tags'
                 api_type = 'usage_tag'
             else:
-                if 'from' in params and len(str(params['from'])) == 8:
+                # 날짜 형식에 따라 daily/monthly, accountId 유무에 따라 account/corp로 분기
+                from_str = str(params.get('from', ''))
+                is_daily = len(from_str) == 8 and from_str.isdigit()
+                is_monthly = len(from_str) == 6 and from_str.isdigit()
+                has_account_id = 'accountId' in params and params['accountId']
+                if is_daily:
                     target_api_path = '/usage/ondemand/daily'
                     api_type = 'usage_daily'
+                elif is_monthly:
+                    target_api_path = '/usage/ondemand/monthly'
+                    api_type = 'usage_monthly'
                 else:
+                    # 기본값: corp monthly
                     target_api_path = '/usage/ondemand/monthly'
                     api_type = 'usage_monthly'
         else:
             if 'from' in params and len(str(params['from'])) == 8:
-                target_api_path = '/costs/ondemand/account/daily' if has_account else '/costs/ondemand/corp/daily'
+                if 'accountId' in params and params['accountId']:
+                    target_api_path = '/costs/ondemand/account/daily'
+                else:
+                    target_api_path = '/costs/ondemand/corp/daily'
                 api_type = 'costs_daily'
             else:
-                target_api_path = '/costs/ondemand/account/monthly' if has_account else '/costs/ondemand/corp/monthly'
+                if 'accountId' in params and params['accountId']:
+                    target_api_path = '/costs/ondemand/account/monthly'
+                else:
+                    target_api_path = '/costs/ondemand/corp/monthly'
                 api_type = 'costs_monthly'
 
     print(f"[DEBUG] API 분기: {target_api_path} ({api_type})")
