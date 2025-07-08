@@ -631,8 +631,10 @@ def summarize_cost_items_table(cost_items, month_str, account_names=None, is_dai
             msg += f"- 기타 서비스: 약 ${etc:,.0f} ({etc/total*100:.1f}%)\n"
         msg += "\n*━━━━━━━━━━━━━━━━━━━━━━*\n"
         msg += ":bulb: *분석 포인트*\n"
-        if top_services:
+        if total > 0 and top_services:
             msg += f"- *{top_services[0][0]}*가 전체 비용의 약 {top_services[0][1]/total*100:.1f}% 차지\n"
+        else:
+            msg += "- 전체 비용이 0이거나, 분석 가능한 데이터가 없습니다.\n"
         if account_names:
             msg += f"- 전체 {len(account_names)}개 계정({', '.join(account_names)})의 통합 사용량\n"
         msg += f"- 총 {len(cost_items)}개 비용 항목\n"
