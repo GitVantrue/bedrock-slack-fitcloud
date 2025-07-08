@@ -1081,7 +1081,9 @@ def lambda_handler(event, context):
             print(f"[RESPONSE] status_code: {response.status_code}")
             print(f"[RESPONSE] body: {str(response.text)[:500]}")
             raw_data = response.json()
-            processed_data_wrapper = process_invoice_response(raw_data, params['billingPeriod'], params.get('accountId'))
+            # 실제 API 요청에 사용한 billingPeriod를 우선적으로 전달
+            billing_period_used = api_data['billingPeriod']
+            processed_data_wrapper = process_invoice_response(raw_data, billing_period_used, params.get('accountId'))
             return create_bedrock_response(event, 200, processed_data_wrapper)
 
         elif target_api_path == '/usage/ondemand/tags':
