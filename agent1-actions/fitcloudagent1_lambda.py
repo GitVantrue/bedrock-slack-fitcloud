@@ -1025,13 +1025,22 @@ def lambda_handler(event, context):
             return create_bedrock_response(event, 200, processed_data_wrapper)
 
         elif target_api_path.startswith('/costs/ondemand/'):
-            api_data = {}
-            if 'billingPeriod' in params:
-                api_data['billingPeriod'] = params['billingPeriod']
-            else:
+            # 두 API는 반드시 from, to (account는 accountId도)로만 요청
+            if target_api_path in ['/costs/ondemand/corp/monthly', '/costs/ondemand/account/monthly']:
+                api_data = {}
                 if 'from' in params: api_data['from'] = params['from']
                 if 'to' in params: api_data['to'] = params['to']
-            if 'accountId' in params: api_data['accountId'] = params['accountId']
+                if target_api_path == '/costs/ondemand/account/monthly' and 'accountId' in params:
+                    api_data['accountId'] = params['accountId']
+            else:
+                # 기존 로직 유지 (billingPeriod 우선, 없으면 from/to)
+                api_data = {}
+                if 'billingPeriod' in params:
+                    api_data['billingPeriod'] = params['billingPeriod']
+                else:
+                    if 'from' in params: api_data['from'] = params['from']
+                    if 'to' in params: api_data['to'] = params['to']
+                if 'accountId' in params: api_data['accountId'] = params['accountId']
             url = f'{FITCLOUD_BASE_URL}{target_api_path}'
             print(f"[REQUEST] POST {url}")
             print(f"[REQUEST] headers: {headers}")
