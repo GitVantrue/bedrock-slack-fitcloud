@@ -1,4 +1,3 @@
-
 import json
 import boto3
 import logging
@@ -45,4 +44,4 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         return {
             'statusCode': HTTPStatus.INTERNAL_SERVER_ERROR,
             'body': f'Agent0에서 Agent1 호출 중 오류: {str(e)}'
-        }
+        } 
