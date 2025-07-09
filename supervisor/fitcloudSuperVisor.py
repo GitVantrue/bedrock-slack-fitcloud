@@ -11,6 +11,9 @@ AGENT2_ID = os.environ.get("AGENT2_ID", "7HPRF6E9UD")
 AGENT2_KEYWORDS = ["보고서", "리포트", "엑셀", "차트", "그래프", "PDF", "파일", "첨부", "다운로드", "업로드", "슬랙"]
 
 def lambda_handler(event, context):
+    # event가 list로 들어오는 경우 방어
+    if isinstance(event, list):
+        event = event[0]
     try:
         user_input = event.get("parameters", {}).get("user_input")
         if not user_input:
