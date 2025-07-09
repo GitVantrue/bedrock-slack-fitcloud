@@ -485,6 +485,24 @@ def create_bedrock_response(event, status_code=200, response_data=None, error_me
     if "message" in final_data:
         print(f"[RESPONSE][message] {final_data['message']}")
 
+    # === sessionAttributes에 표/요금 데이터와 메시지 추가 ===
+    # 기존 sessionAttributes 불러오기
+    session_attributes = session_attributes or {}
+    # 표/요금 데이터 추출
+    last_cost_table = None
+    last_cost_message = None
+    if "cost_items" in final_data:
+        last_cost_table = final_data["cost_items"]
+        last_cost_message = final_data.get("message")
+    elif "data" in final_data:
+        last_cost_table = final_data["data"]
+        last_cost_message = final_data.get("message")
+    # sessionAttributes에 저장
+    if last_cost_table is not None:
+        session_attributes["last_cost_table"] = json.dumps(last_cost_table, ensure_ascii=False)
+    if last_cost_message is not None:
+        session_attributes["last_cost_message"] = last_cost_message
+
     return {
         "messageVersion": "1.0",
         "response": {
