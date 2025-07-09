@@ -22,7 +22,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 'body': 'user_input 파라미터가 필요합니다.'
             }
 
-        agent1_lambda_name = "fitcloudagent1_lambda"  # 실제 함수명으로 변경 필요
+        agent1_lambda_name = "fitcloud_action_part1-wpfe6"  # 실제 함수명으로 변경 필요
 
         logger.info(f"[Agent0] Agent1({agent1_lambda_name})로 위임 시작, user_input: {user_input}")
         # Agent1로 전달할 event 구성 (user_input만 전달)
