@@ -13,18 +13,33 @@ AGENT2_KEYWORDS = ["보고서", "리포트", "엑셀", "차트", "그래프", "P
 def lambda_handler(event, context):
     import json
     logger.info(f"event 구조: {json.dumps(event, ensure_ascii=False)}")
-    # event가 dict가 될 때까지 반복해서 언패킹
     while isinstance(event, list):
         event = event[0]
-    try:
-        user_input = event.get("parameters", {}).get("user_input")
-        if not user_input:
-            logger.error("[Agent0] user_input 파라미터가 없습니다.")
-            return {
-                'statusCode': HTTPStatus.BAD_REQUEST,
-                'body': 'user_input 파라미터가 필요합니다.'
-            }
 
+    # user_input 추출 로직 (event 구조에 따라 분기)
+    user_input = None
+    try:
+        # 1. parameters가 dict로 들어오는 경우
+        if isinstance(event.get("parameters"), dict):
+            user_input = event["parameters"].get("user_input")
+        # 2. parameters가 list이거나 없을 때, requestBody에서 추출
+        if not user_input:
+            props = event["requestBody"]["content"]["application/json"]["properties"]
+            for prop in props:
+                if prop.get("name") == "user_input":
+                    user_input = prop.get("value")
+                    break
+    except Exception as e:
+        logger.error(f"user_input 추출 실패: {e}")
+
+    if not user_input:
+        logger.error("[Agent0] user_input 파라미터가 없습니다.")
+        return {
+            'statusCode': HTTPStatus.BAD_REQUEST,
+            'body': 'user_input 파라미터가 필요합니다.'
+        }
+
+    try:
         # 분기: Agent2 키워드 포함 여부
         if any(keyword in user_input for keyword in AGENT2_KEYWORDS):
             target_agent_id = AGENT2_ID
