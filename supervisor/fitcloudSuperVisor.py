@@ -58,8 +58,7 @@ def lambda_handler(event, context):
             agentId=target_agent_id,
             agentAliasId=target_agent_alias,  # 별칭 필수!
             sessionId="your-session-id",  # 필요시 고유 세션ID 생성/전달
-            inputText=user_input,
-            enableStreaming=False  # 스트리밍 비활성화로 일반 JSON 응답 받기
+            inputText=user_input
         )
         result = response.get("completion", "")
         logger.info(f"[Agent0] {target_agent_id} 응답: {result}")
