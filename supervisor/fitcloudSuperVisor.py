@@ -102,11 +102,13 @@ def lambda_handler(event, context):
             except Exception as e:
                 logger.error(f"EventStream 파싱 실패: {e}")
                 result = f"[Agent0] EventStream 파싱 실패: {str(e)}"
+        # result가 비어 있으면 response를 문자열로 강제 변환
+        if not result:
+            result = str(response)
         logger.info(f"[Agent0] {target_agent_id} 응답: {result}")
-
         return {
             'statusCode': 200,
-            'body': result
+            'body': result  # 반드시 문자열!
         }
 
     except Exception as e:
