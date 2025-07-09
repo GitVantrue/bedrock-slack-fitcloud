@@ -54,12 +54,41 @@ def lambda_handler(event, context):
 
         # Bedrock Agent Runtime 호출
         client = boto3.client("bedrock-agent-runtime")
-        response = client.invoke_agent(
+        # Agent1 먼저 호출해서 sessionAttributes 확보 (Agent2 키워드일 때만)
+        session_attributes = None
+        if target_agent_id == AGENT2_ID:
+            # Agent1 호출
+            agent1_response = client.invoke_agent(
+                agentId=AGENT1_ID,
+                agentAliasId=AGENT1_ALIAS,
+                sessionId="your-session-id",
+                inputText=user_input
+            )
+            agent1_result = ""
+            if hasattr(agent1_response, 'get') and 'completion' in agent1_response:
+                agent1_result = agent1_response.get("completion", "")
+            else:
+                try:
+                    for event in agent1_response:
+                        if 'chunk' in event:
+                            agent1_result += event['chunk']['bytes'].decode('utf-8')
+                except Exception as e:
+                    logger.error(f"Agent1 EventStream 파싱 실패: {e}")
+            # sessionAttributes 추출
+            if hasattr(agent1_response, 'get'):
+                session_attributes = agent1_response.get("sessionAttributes")
+            if not session_attributes:
+                session_attributes = {}
+        # Agent2 호출 시 sessionAttributes 전달
+        agent2_kwargs = dict(
             agentId=target_agent_id,
-            agentAliasId=target_agent_alias,  # 별칭 필수!
-            sessionId="your-session-id",  # 필요시 고유 세션ID 생성/전달
+            agentAliasId=target_agent_alias,
+            sessionId="your-session-id",
             inputText=user_input
         )
+        if session_attributes:
+            agent2_kwargs["sessionAttributes"] = session_attributes
+        response = client.invoke_agent(**agent2_kwargs)
         # EventStream 객체 대응: completion 필드가 없으면 직접 파싱
         result = ""
         if hasattr(response, 'get') and 'completion' in response:
