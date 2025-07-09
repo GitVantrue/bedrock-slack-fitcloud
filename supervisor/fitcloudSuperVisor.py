@@ -60,7 +60,19 @@ def lambda_handler(event, context):
             sessionId="your-session-id",  # 필요시 고유 세션ID 생성/전달
             inputText=user_input
         )
-        result = response.get("completion", "")
+        # EventStream 객체 대응: completion 필드가 없으면 직접 파싱
+        result = ""
+        if hasattr(response, 'get') and 'completion' in response:
+            result = response.get("completion", "")
+        else:
+            # EventStream 객체 직접 파싱
+            try:
+                for event in response:
+                    if 'chunk' in event:
+                        result += event['chunk']['bytes'].decode('utf-8')
+            except Exception as e:
+                logger.error(f"EventStream 파싱 실패: {e}")
+                result = f"[Agent0] EventStream 파싱 실패: {str(e)}"
         logger.info(f"[Agent0] {target_agent_id} 응답: {result}")
 
         return {
