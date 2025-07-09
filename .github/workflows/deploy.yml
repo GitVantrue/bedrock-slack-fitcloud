@@ -73,9 +73,9 @@ jobs:
               zip -r ../supervisor.zip . -x "*.pyc" "__pycache__/*"
               cd ..
               aws lambda update-function-code \
-                --function-name supervisorAgent0ActionGrp250708 \
+                --function-name supervisorAgent0ActionGrp250708-v5i9e \
                 --zip-file fileb://supervisor.zip
-              echo "✅ supervisorAgent0ActionGrp250708 배포 완료!"
+              echo "✅ supervisorAgent0ActionGrp250708-v5i9e 배포 완료!"
             fi
           fi
         elif [ "$BRANCH_NAME" = "unify" ]; then
