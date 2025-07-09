@@ -6,8 +6,10 @@ from http import HTTPStatus
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-AGENT1_ID = os.environ.get("AGENT1_ID", "NBLVKZOU76")
-AGENT2_ID = os.environ.get("AGENT2_ID", "7HPRF6E9UD")
+AGENT1_ID = os.environ.get("AGENT1_ID", "7HPRF6E9UD")
+AGENT1_ALIAS = os.environ.get("AGENT1_ALIAS", "Z6NLZGHRTE")
+AGENT2_ID = os.environ.get("AGENT2_ID", "NBLVKZOU76")
+AGENT2_ALIAS = os.environ.get("AGENT2_ALIAS", "PSADGJ398L")
 AGENT2_KEYWORDS = ["보고서", "리포트", "엑셀", "차트", "그래프", "PDF", "파일", "첨부", "다운로드", "업로드", "슬랙"]
 
 def lambda_handler(event, context):
@@ -43,15 +45,18 @@ def lambda_handler(event, context):
         # 분기: Agent2 키워드 포함 여부
         if any(keyword in user_input for keyword in AGENT2_KEYWORDS):
             target_agent_id = AGENT2_ID
+            target_agent_alias = AGENT2_ALIAS
             logger.info(f"[Agent0] Agent2({target_agent_id})로 위임 시작, user_input: {user_input}")
         else:
             target_agent_id = AGENT1_ID
+            target_agent_alias = AGENT1_ALIAS
             logger.info(f"[Agent0] Agent1({target_agent_id})로 위임 시작, user_input: {user_input}")
 
         # Bedrock Agent Runtime 호출
         client = boto3.client("bedrock-agent-runtime")
         response = client.invoke_agent(
             agentId=target_agent_id,
+            agentAliasId=target_agent_alias,  # 별칭 필수!
             sessionId="your-session-id",  # 필요시 고유 세션ID 생성/전달
             inputText=user_input
         )
