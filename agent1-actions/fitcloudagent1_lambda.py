@@ -503,39 +503,22 @@ def create_bedrock_response(event, status_code=200, response_data=None, error_me
     if last_cost_message is not None:
         session_attributes["last_cost_message"] = last_cost_message
 
-    # AWS Bedrock Agent가 conversationHistory에 기록할 수 있는 응답 형식
-    if error_message:
-        # 오류 응답
-        return {
-            "response": {
-                "body": {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": f"❌ 오류가 발생했습니다: {error_message}"
-                        }
-                    ]
+    # AWS Bedrock Agent가 기대하는 응답 형식
+    return {
+        "messageVersion": "1.0",
+        "response": {
+            "actionGroup": action_group,
+            "apiPath": api_path_from_event, 
+            "httpMethod": http_method,
+            "httpStatusCode": status_code,
+            "responseBody": {
+                "application/json": {
+                    "body": json.dumps(final_data, ensure_ascii=False)
                 }
-            },
-            "sessionAttributes": session_attributes
-        }
-    else:
-        # 성공 응답 - message 필드를 사용자에게 보여줄 응답으로 사용
-        user_message = final_data.get("message", "조회가 완료되었습니다.")
-        
-        return {
-            "response": {
-                "body": {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": user_message
-                        }
-                    ]
-                }
-            },
-            "sessionAttributes": session_attributes
-        }
+            }
+        },
+        "sessionAttributes": session_attributes
+    }
 
 def safe_float(val, default=0.0):
     try:
