@@ -96,7 +96,7 @@ def lambda_handler(event, context):
                 # Agent1에서 표 데이터가 있다면 그것도 저장
                 if "표" in agent1_result or "데이터" in agent1_result:
                     session_attributes["last_cost_table"] = agent1_result
-        # Agent2 호출 시 sessionAttributes 전달
+        # Agent2 호출 시 sessionState 전달
         agent2_kwargs = dict(
             agentId=target_agent_id,
             agentAliasId=target_agent_alias,
@@ -104,7 +104,9 @@ def lambda_handler(event, context):
             inputText=user_input
         )
         if session_attributes:
-            agent2_kwargs["sessionAttributes"] = session_attributes
+            agent2_kwargs["sessionState"] = {
+                "sessionAttributes": session_attributes
+            }
         
         try:
             response = client.invoke_agent(**agent2_kwargs)
