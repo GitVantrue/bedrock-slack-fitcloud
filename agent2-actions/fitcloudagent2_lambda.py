@@ -344,7 +344,17 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             logger.error(f"[Agent2] conversationHistory keys: {list(conversation_history.keys())}")
             logger.error(f"[Agent2] sessionAttributes keys: {list(session_attrs.keys())}")
             return {
-                'completion': f'❌ [Agent2] {error_msg}'
+                'response': {
+                    'responseBody': {
+                        'application/json': {
+                            'body': json.dumps({
+                                'message': f'❌ [Agent2] {error_msg}',
+                                'success': False,
+                                'error': error_msg
+                            }, ensure_ascii=False)
+                        }
+                    }
+                }
             }
 
         # 데이터 검증
@@ -375,8 +385,22 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         )
         
         logger.info(f"[Agent2] 처리 완료")
+        
+        # AWS Bedrock Agent 응답 형식으로 반환
         return {
-            'completion': completion_msg
+            'response': {
+                'responseBody': {
+                    'application/json': {
+                        'body': json.dumps({
+                            'message': completion_msg,
+                            'success': True,
+                            'file_id': upload_result.get('file_id'),
+                            'permalink': upload_result.get('permalink'),
+                            'report_title': upload_result.get('report_title')
+                        }, ensure_ascii=False)
+                    }
+                }
+            }
         }
 
     except Exception as e:
@@ -384,5 +408,15 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         tb = traceback.format_exc()
         logger.error(f"[Agent2] 처리 중 오류: {e}\n{tb}", exc_info=True)
         return {
-            'completion': f'❌ [Agent2] 처리 중 오류: {str(e)}'
+            'response': {
+                'responseBody': {
+                    'application/json': {
+                        'body': json.dumps({
+                            'message': f'❌ [Agent2] 처리 중 오류: {str(e)}',
+                            'success': False,
+                            'error': str(e)
+                        }, ensure_ascii=False)
+                    }
+                }
+            }
         } 

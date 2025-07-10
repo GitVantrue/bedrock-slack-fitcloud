@@ -117,10 +117,13 @@ def lambda_handler(event, context):
     content_type = headers.get('content-type', '').lower()
     raw_body = event.get('body', '')
 
-    # --- Slack 재시도 이벤트 처리: X-Slack-Retry-Num 헤더가 있으면 이미 처리된 이벤트일 가능성이 높으므로 무시 ---
-    if 'x-slack-retry-num' in headers:
-        logger.info(f"Ignoring Slack retry event: {headers.get('x-slack-retry-num')}")
+    # --- Slack 재시도 이벤트 처리: 2번째 재시도부터만 무시 (첫 번째 재시도는 처리) ---
+    retry_num = headers.get('x-slack-retry-num')
+    if retry_num and int(retry_num) > 1:
+        logger.info(f"Ignoring Slack retry event (retry #{retry_num})")
         return {'statusCode': 200, 'body': 'OK'}
+    elif retry_num:
+        logger.info(f"Processing Slack retry event (retry #{retry_num})")
 
     # --- body_json_dict 초기화 및 Slack URL Verification/JSON 파싱 ---
     body_json_dict = {}
@@ -169,6 +172,8 @@ def lambda_handler(event, context):
         user_id = slack_event.get('user')
         original_text = slack_event.get('text')
 
+        logger.info(f"Processing event: type={event_type}, channel={channel_id}, user={user_id}, text='{original_text}'")
+
         if event_type == 'app_mention':
             bot_user_id = slack_event_payload.get('authed_users', [None])[0]
             if bot_user_id:
@@ -187,11 +192,19 @@ def lambda_handler(event, context):
             # Bedrock Agent 런타임 클라이언트
             bedrock_agent_client = boto3.client('bedrock-agent-runtime')
             
-            # TODO: 실제 Bedrock Agent ID와 Alias ID로 변경해야 합니다.
-            # 이 값들을 환경 변수나 Secrets Manager에서 가져오는 것이 좋습니다.
-            # 환경 변수에서 가져오려면 Lambda 함수 설정에 BEDROCK_AGENT_ID, BEDROCK_AGENT_ALIAS_ID를 추가해야 합니다.
-            agent_id = os.environ.get('BEDROCK_AGENT_ID', 'YOUR_BEDROCK_AGENT_ID') # <-- 이 부분 변경!
-            agent_alias_id = os.environ.get('BEDROCK_AGENT_ALIAS_ID', 'YOUR_BEDROCK_AGENT_ALIAS_ID') # <-- 이 부분 변경!
+            # 환경 변수에서 Agent ID와 Alias ID 가져오기
+            agent_id = os.environ.get('BEDROCK_AGENT_ID')
+            agent_alias_id = os.environ.get('BEDROCK_AGENT_ALIAS_ID')
+            
+            if not agent_id or agent_id == 'YOUR_BEDROCK_AGENT_ID':
+                logger.error("BEDROCK_AGENT_ID environment variable is not set or has default value")
+                send_slack_message(channel_id, f"죄송합니다, <@{user_id}>님. 시스템 설정 오류가 발생했습니다.")
+                return {'statusCode': 500, 'body': 'Internal Server Error'}
+                
+            if not agent_alias_id or agent_alias_id == 'YOUR_BEDROCK_AGENT_ALIAS_ID':
+                logger.error("BEDROCK_AGENT_ALIAS_ID environment variable is not set or has default value")
+                send_slack_message(channel_id, f"죄송합니다, <@{user_id}>님. 시스템 설정 오류가 발생했습니다.")
+                return {'statusCode': 500, 'body': 'Internal Server Error'}
 
             # 세션 ID 생성 (대화 지속성을 위해 user_id와 channel_id를 조합)
             session_id = f"{user_id}-{channel_id}" 
