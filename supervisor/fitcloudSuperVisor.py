@@ -47,7 +47,9 @@ def lambda_handler(event, context):
         logger.error("[Agent0] user_input 파라미터가 없습니다.")
         return {
             'statusCode': HTTPStatus.BAD_REQUEST,
-            'body': 'user_input 파라미터가 필요합니다.'
+            'body': json.dumps({
+                'message': 'user_input 파라미터가 필요합니다.'
+            }, ensure_ascii=False)
         }
 
     try:
@@ -131,12 +133,16 @@ def lambda_handler(event, context):
         logger.info(f"[Agent0] {target_agent_id} 응답 완료, 결과 길이: {len(result) if result else 0}")
         return {
             'statusCode': 200,
-            'body': result  # 반드시 문자열!
+            'body': json.dumps({
+                'message': result
+            }, ensure_ascii=False)
         }
 
     except Exception as e:
         logger.error(f"[Agent0] 에이전트 호출 중 오류: {e}", exc_info=True)
         return {
             'statusCode': HTTPStatus.INTERNAL_SERVER_ERROR,
-            'body': f'Agent0에서 에이전트 호출 중 오류: {str(e)}'
+            'body': json.dumps({
+                'message': f'Agent0에서 에이전트 호출 중 오류: {str(e)}'
+            }, ensure_ascii=False)
         } 
