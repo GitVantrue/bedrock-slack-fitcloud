@@ -10,7 +10,7 @@ AGENT1_ID = os.environ.get("AGENT1_ID", "7HPRF6E9UD")
 AGENT1_ALIAS = os.environ.get("AGENT1_ALIAS", "Z6NLZGHRTE")
 AGENT2_ID = os.environ.get("AGENT2_ID", "NBLVKZOU76")
 AGENT2_ALIAS = os.environ.get("AGENT2_ALIAS", "PSADGJ398L")
-AGENT2_KEYWORDS = ["보고서", "리포트", "엑셀", "차트", "그래프", "PDF", "파일", "첨부", "다운로드", "업로드", "슬랙"]
+AGENT2_KEYWORDS = ["보고서", "리포트", "엑셀", "차트", "그래프", "PDF", "파일", "첨부", "다운로드", "업로드", "슬랙", "만들어", "생성", "제작"]
 
 def lambda_handler(event, context):
     import json
@@ -59,28 +59,27 @@ def lambda_handler(event, context):
         }
 
     try:
-        # 분기: Agent2 키워드 포함 여부
-        if any(keyword in user_input for keyword in AGENT2_KEYWORDS):
-            target_agent_id = AGENT2_ID
-            target_agent_alias = AGENT2_ALIAS
-            logger.info(f"[Agent0] Agent2({target_agent_id})로 위임 시작, user_input: {user_input}")
-        else:
-            target_agent_id = AGENT1_ID
-            target_agent_alias = AGENT1_ALIAS
-            logger.info(f"[Agent0] Agent1({target_agent_id})로 위임 시작, user_input: {user_input}")
-
-        # Bedrock Agent Runtime 호출
-        client = boto3.client("bedrock-agent-runtime")
-        # Agent1 먼저 호출해서 sessionAttributes 확보 (Agent2 키워드일 때만)
-        session_attributes = None
-        conversation_history = []
+        # 세션 ID 생성
+        session_id = f"supervisor-{user_input[:20]}"  # 고유한 세션 ID 생성
         
-        if target_agent_id == AGENT2_ID:
-            # Agent1 호출
+        # 분기: 보고서 생성 요청인지 확인
+        is_report_request = any(keyword in user_input for keyword in AGENT2_KEYWORDS)
+        
+        if is_report_request:
+            # 보고서 생성 요청: Agent1 → Agent2 순서로 호출
+            logger.info(f"[Agent0] 보고서 생성 요청 감지, Agent1 → Agent2 순서로 처리, user_input: {user_input}")
+            
+            # Bedrock Agent Runtime 호출
+            client = boto3.client("bedrock-agent-runtime")
+            session_attributes = None
+            conversation_history = []
+            
+            # 1단계: Agent1 호출 (데이터 수집)
+            logger.info(f"[Agent0] 1단계: Agent1({AGENT1_ID}) 호출 시작")
             agent1_response = client.invoke_agent(
                 agentId=AGENT1_ID,
                 agentAliasId=AGENT1_ALIAS,
-                sessionId="your-session-id",
+                sessionId=session_id,
                 inputText=user_input
             )
             agent1_result = ""
@@ -105,6 +104,8 @@ def lambda_handler(event, context):
             except Exception as e:
                 logger.error(f"Agent1 EventStream 파싱 실패: {e}")
                 agent1_result = f"Agent1 호출 실패: {str(e)}"
+            
+            logger.info(f"[Agent0] Agent1 응답 완료, 길이: {len(agent1_result)}")
             
             # conversationHistory 구성
             conversation_history = {
@@ -144,29 +145,46 @@ def lambda_handler(event, context):
                 # Agent1에서 표 데이터가 있다면 그것도 저장
                 if "표" in agent1_result or "데이터" in agent1_result:
                     session_attributes["last_cost_table"] = str(agent1_result)
+            
+            # 2단계: Agent2 호출 (보고서 생성)
+            target_agent_id = AGENT2_ID
+            target_agent_alias = AGENT2_ALIAS
+            logger.info(f"[Agent0] 2단계: Agent2({target_agent_id}) 호출 시작")
+            
+        else:
+            # 단순 요금 조회: Agent1만 호출
+            target_agent_id = AGENT1_ID
+            target_agent_alias = AGENT1_ALIAS
+            logger.info(f"[Agent0] 단순 요금 조회, Agent1({target_agent_id})만 호출, user_input: {user_input}")
+            
+            # Bedrock Agent Runtime 호출
+            client = boto3.client("bedrock-agent-runtime")
+            session_attributes = None
+            conversation_history = []
         
-        # Agent2 호출 시 sessionState 전달 (Agent1 응답 포함)
-        agent2_kwargs = dict(
+        # Agent 호출 (Agent1 또는 Agent2)
+        agent_kwargs = dict(
             agentId=target_agent_id,
             agentAliasId=target_agent_alias,
-            sessionId="your-session-id",
+            sessionId=session_id,
             inputText=user_input
         )
         
-        # sessionState 구성 (conversationHistory 포함)
-        session_state = {
-            "sessionAttributes": session_attributes or {}
-        }
-        
-        # conversationHistory가 있으면 추가
-        if conversation_history:
-            session_state["conversationHistory"] = conversation_history
-            logger.info(f"[Agent0] conversationHistory 추가: {len(conversation_history)}개 메시지")
-        
-        agent2_kwargs["sessionState"] = session_state
+        # 보고서 생성 요청인 경우에만 sessionState 추가 (Agent1 응답 포함)
+        if is_report_request:
+            session_state = {
+                "sessionAttributes": session_attributes or {}
+            }
+            
+            # conversationHistory가 있으면 추가
+            if conversation_history:
+                session_state["conversationHistory"] = conversation_history
+                logger.info(f"[Agent0] conversationHistory 추가: {len(conversation_history)}개 메시지")
+            
+            agent_kwargs["sessionState"] = session_state
         
         try:
-            response = client.invoke_agent(**agent2_kwargs)
+            response = client.invoke_agent(**agent_kwargs)
             # EventStream 객체 직접 파싱
             result = ""
             try:
