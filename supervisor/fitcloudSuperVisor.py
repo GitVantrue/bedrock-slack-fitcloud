@@ -2,6 +2,7 @@ import os
 import boto3
 import logging
 import json
+import re
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -59,18 +60,16 @@ def lambda_handler(event, context):
         sessionId=session_id,
         inputText=user_input
     )
-    agent1_result_text = ""
-    try:
-        for event in agent1_response:
-            if 'chunk' in event and 'bytes' in event['chunk']:
-                agent1_result_text += event['chunk']['bytes'].decode('utf-8')
-    except Exception as e:
-        logger.error(f"Agent1 EventStream 파싱 실패: {e}")
-        agent1_result_text = f"Agent1 호출 실패: {str(e)}"
-    if not agent1_result_text:
-        agent1_result_text = "[Supervisor] Agent1으로부터 유효한 응답을 받지 못했습니다."
-    logger.info(f"[Supervisor] Agent1 최종 응답: {agent1_result_text[:300]}")
-    # 2. Agent2 호출 (inputText에 Agent1 결과 명시적 포함)
+    # 1. Agent1 응답 chunk 이어붙이기
+    raw_agent1_response = ""
+    for event in agent1_response:
+        if 'chunk' in event and 'bytes' in event['chunk']:
+            raw_agent1_response += event['chunk']['bytes'].decode('utf-8')
+
+    # 2. 마크다운 텍스트만 추출
+    agent1_result_text = extract_markdown_from_agent1(raw_agent1_response)
+
+    # 3. Agent2 호출
     agent2_input_text = f"보고서를 만들어주세요. 조회된 데이터:\n{agent1_result_text}"
     logger.info(f"[Supervisor] Agent2 호출용 inputText: {agent2_input_text[:300]}")
     agent2_response = client.invoke_agent(
@@ -105,4 +104,16 @@ def lambda_handler(event, context):
                 ]
             }
         }
-    } 
+    }
+
+def extract_markdown_from_agent1(raw_response: str) -> str:
+    # [RESPONSE][message] 이후 ~ END까지 추출
+    match = re.search(r"\[RESPONSE\]\[message\](.*)", raw_response, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    # 또는, *━━━━━━━━━━━━━━━━━━━━━━* 등 마크다운 패턴으로 추출
+    md_match = re.search(r"(\*━━━━━━━━+.*?)(?:END RequestId|$)", raw_response, re.DOTALL)
+    if md_match:
+        return md_match.group(1).strip()
+    # fallback: 전체 raw 반환
+    return raw_response.strip() 
