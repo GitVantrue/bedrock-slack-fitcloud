@@ -244,16 +244,73 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 params = {"user_input": params}
         logger.info(f"[Agent2] 입력 파라미터: {params}")
 
-        # === conversationHistory와 sessionAttributes에서 Agent1 응답 확인 ===
+        # === inputText, conversationHistory, sessionAttributes에서 Agent1 응답 확인 ===
         session_attrs = event.get("sessionAttributes", {})
         conversation_history = event.get("conversationHistory", {})
+        input_text = event.get("inputText", "")
         agent1_response_data = session_attrs.get("agent1_response_data")
         agent1_response_processed = session_attrs.get("agent1_response_processed")
         used_session = False
         report_data = None
         
-        # 1. conversationHistory에서 Agent1 응답 추출 시도
-        if conversation_history and "messages" in conversation_history and len(conversation_history["messages"]) >= 2:
+        # 1. inputText에서 Agent1 응답 추출 시도 (최우선)
+        if input_text and "조회된 데이터:" in input_text:
+            try:
+                logger.info(f"[Agent2] inputText에서 Agent1 응답 추출 시도")
+                logger.info(f"[Agent2] inputText 길이: {len(input_text)}")
+                
+                # inputText에서 비용 정보 추출
+                cost_items = []
+                
+                # "총 온디맨드 사용 금액" 추출
+                import re
+                total_amount_match = re.search(r'총 온디맨드 사용금액:\s*\$([0-9,]+\.?[0-9]*)', input_text)
+                if total_amount_match:
+                    total_amount = float(total_amount_match.group(1).replace(',', ''))
+                    cost_items.append({
+                        "service": "Total",
+                        "amount": total_amount,
+                        "description": "총 온디맨드 사용 금액"
+                    })
+                
+                # 서비스별 비용 추출 (숫자. 서비스명: $금액 형식)
+                service_matches = re.findall(r'(\d+)\.\s*([^:]+):\s*\$([0-9,]+)', input_text)
+                for match in service_matches:
+                    service_name = match[1].strip()
+                    amount = float(match[2].replace(',', ''))
+                    cost_items.append({
+                        "service": service_name,
+                        "amount": amount,
+                        "description": f"{service_name} 비용"
+                    })
+                
+                # 기타 서비스 추출
+                other_match = re.search(r'기타 서비스:\s*\$([0-9,]+)', input_text)
+                if other_match:
+                    other_amount = float(other_match.group(1).replace(',', ''))
+                    cost_items.append({
+                        "service": "기타 서비스",
+                        "amount": other_amount,
+                        "description": "기타 서비스 비용"
+                    })
+                
+                if cost_items:
+                    report_data = cost_items
+                    logger.info(f"[Agent2] inputText에서 {len(cost_items)}개 비용 항목 추출 성공")
+                    used_session = True
+                else:
+                    # 파싱 실패 시 기본 구조로 변환
+                    report_data = [{"message": input_text, "type": "text_summary"}]
+                    logger.info(f"[Agent2] inputText 파싱 실패, 기본 구조로 변환")
+                    used_session = True
+                    
+            except Exception as e:
+                logger.error(f"[Agent2] inputText 파싱 실패: {e}")
+                report_data = [{"message": input_text, "type": "text_summary"}]
+                used_session = True
+        
+        # 2. conversationHistory에서 Agent1 응답 추출 시도 (백업)
+        elif conversation_history and "messages" in conversation_history and len(conversation_history["messages"]) >= 2:
             try:
                 logger.info(f"[Agent2] conversationHistory에서 Agent1 응답 추출 시도")
                 # conversationHistory 구조: {"messages": [{"role": "user", "content": ["..."]}, {"role": "assistant", "content": ["..."]}]}
