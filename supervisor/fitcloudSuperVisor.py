@@ -125,7 +125,9 @@ def lambda_handler(event, context):
         except Exception as e:
             logger.error(f"Agent 호출 실패: {e}")
             result = f"[Agent0] Agent 호출 실패: {str(e)}"
-        logger.info(f"[Agent0] {target_agent_id} 응답: {result}")
+        
+        # EventStream 객체를 직접 로깅하지 않고 결과만 로깅
+        logger.info(f"[Agent0] {target_agent_id} 응답 완료, 결과 길이: {len(result) if result else 0}")
         return {
             'statusCode': 200,
             'body': result  # 반드시 문자열!
