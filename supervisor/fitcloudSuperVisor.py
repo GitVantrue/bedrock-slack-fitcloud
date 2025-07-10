@@ -47,13 +47,12 @@ def lambda_handler(event, context):
         logger.error("[Agent0] user_input 파라미터가 없습니다.")
         return {
             'response': {
-                'body': {
-                    'content': [
-                        {
-                            'type': 'text',
-                            'text': 'user_input 파라미터가 필요합니다.'
-                        }
-                    ]
+                'responseBody': {
+                    'application/json': {
+                        'body': json.dumps({
+                            'message': 'user_input 파라미터가 필요합니다.'
+                        }, ensure_ascii=False)
+                    }
                 }
             }
         }
@@ -211,13 +210,12 @@ def lambda_handler(event, context):
         # AWS Bedrock Agent가 기대하는 응답 형식
         return {
             'response': {
-                'body': {
-                    'content': [
-                        {
-                            'type': 'text',
-                            'text': result
-                        }
-                    ]
+                'responseBody': {
+                    'application/json': {
+                        'body': json.dumps({
+                            'message': result
+                        }, ensure_ascii=False)
+                    }
                 }
             }
         }
@@ -226,13 +224,12 @@ def lambda_handler(event, context):
         logger.error(f"[Agent0] 에이전트 호출 중 오류: {e}", exc_info=True)
         return {
             'response': {
-                'body': {
-                    'content': [
-                        {
-                            'type': 'text',
-                            'text': f'Agent0에서 에이전트 호출 중 오류: {str(e)}'
-                        }
-                    ]
+                'responseBody': {
+                    'application/json': {
+                        'body': json.dumps({
+                            'message': f'Agent0에서 에이전트 호출 중 오류: {str(e)}'
+                        }, ensure_ascii=False)
+                    }
                 }
             }
         } 
