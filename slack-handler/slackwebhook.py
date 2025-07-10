@@ -117,13 +117,11 @@ def lambda_handler(event, context):
     content_type = headers.get('content-type', '').lower()
     raw_body = event.get('body', '')
 
-    # --- Slack 재시도 이벤트 처리: 2번째 재시도부터만 무시 (첫 번째 재시도는 처리) ---
+    # --- Slack 재시도 이벤트 처리: 모든 재시도 무시 (중복 응답 방지) ---
     retry_num = headers.get('x-slack-retry-num')
-    if retry_num and int(retry_num) > 1:
+    if retry_num:
         logger.info(f"Ignoring Slack retry event (retry #{retry_num})")
         return {'statusCode': 200, 'body': 'OK'}
-    elif retry_num:
-        logger.info(f"Processing Slack retry event (retry #{retry_num})")
 
     # --- body_json_dict 초기화 및 Slack URL Verification/JSON 파싱 ---
     body_json_dict = {}
