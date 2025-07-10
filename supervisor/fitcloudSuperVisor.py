@@ -21,16 +21,25 @@ def lambda_handler(event, context):
     # user_input 추출 로직 (event 구조에 따라 분기)
     user_input = None
     try:
-        # 1. parameters가 dict로 들어오는 경우
-        if isinstance(event.get("parameters"), dict):
+        # 1. 직접 user_input이 있는 경우
+        if isinstance(event, dict) and "user_input" in event:
+            user_input = event["user_input"]
+        # 2. parameters가 dict로 들어오는 경우
+        elif isinstance(event.get("parameters"), dict):
             user_input = event["parameters"].get("user_input")
-        # 2. parameters가 list이거나 없을 때, requestBody에서 추출
-        if not user_input:
-            props = event["requestBody"]["content"]["application/json"]["properties"]
-            for prop in props:
-                if prop.get("name") == "user_input":
-                    user_input = prop.get("value")
-                    break
+        # 3. parameters가 list이거나 없을 때, requestBody에서 추출
+        elif event.get("requestBody") and event["requestBody"].get("content"):
+            try:
+                props = event["requestBody"]["content"]["application/json"]["properties"]
+                for prop in props:
+                    if prop.get("name") == "user_input":
+                        user_input = prop.get("value")
+                        break
+            except Exception as e:
+                logger.error(f"requestBody에서 user_input 추출 실패: {e}")
+        # 4. inputText가 있는 경우
+        elif event.get("inputText"):
+            user_input = event["inputText"]
     except Exception as e:
         logger.error(f"user_input 추출 실패: {e}")
 
