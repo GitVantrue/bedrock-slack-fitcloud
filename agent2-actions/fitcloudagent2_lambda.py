@@ -285,10 +285,47 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                             logger.info(f"[Agent2] conversationHistory에서 직접 JSON 사용")
                             used_session = True
                     else:
-                        # 텍스트 응답인 경우
-                        report_data = [{"message": agent1_response_text}]
-                        logger.info(f"[Agent2] conversationHistory에서 텍스트 응답 사용")
-                        used_session = True
+                        # 텍스트 응답인 경우 - 텍스트를 파싱하여 구조화된 데이터로 변환
+                        logger.info(f"[Agent2] conversationHistory에서 텍스트 응답 파싱 시도")
+                        try:
+                            # 텍스트에서 비용 정보 추출
+                            cost_items = []
+                            
+                            # "총 온디맨드 사용 금액" 추출
+                            import re
+                            total_amount_match = re.search(r'총 온디맨드 사용 금액:\s*\$([0-9,]+\.?[0-9]*)', agent1_response_text)
+                            if total_amount_match:
+                                total_amount = float(total_amount_match.group(1).replace(',', ''))
+                                cost_items.append({
+                                    "service": "Total",
+                                    "amount": total_amount,
+                                    "description": "총 온디맨드 사용 금액"
+                                })
+                            
+                            # 서비스별 비용 추출
+                            service_matches = re.findall(r'(\d+)\.\s*([^:]+):\s*\$([0-9,]+)', agent1_response_text)
+                            for match in service_matches:
+                                service_name = match[1].strip()
+                                amount = float(match[2].replace(',', ''))
+                                cost_items.append({
+                                    "service": service_name,
+                                    "amount": amount,
+                                    "description": f"{service_name} 비용"
+                                })
+                            
+                            if cost_items:
+                                report_data = cost_items
+                                logger.info(f"[Agent2] 텍스트에서 {len(cost_items)}개 비용 항목 추출 성공")
+                            else:
+                                # 파싱 실패 시 기본 구조로 변환
+                                report_data = [{"message": agent1_response_text, "type": "text_summary"}]
+                                logger.info(f"[Agent2] 텍스트 파싱 실패, 기본 구조로 변환")
+                            
+                            used_session = True
+                        except Exception as e:
+                            logger.error(f"[Agent2] 텍스트 파싱 실패: {e}")
+                            report_data = [{"message": agent1_response_text, "type": "text_summary"}]
+                            used_session = True
                         
                 except json.JSONDecodeError:
                     # JSON 파싱 실패 시 텍스트로 처리
