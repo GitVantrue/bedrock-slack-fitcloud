@@ -49,9 +49,7 @@ def lambda_handler(event, context):
             'response': {
                 'responseBody': {
                     'application/json': {
-                        'body': json.dumps({
-                            'message': 'user_input 파라미터가 필요합니다.'
-                        }, ensure_ascii=False)
+                        'body': 'user_input 파라미터가 필요합니다.'
                     }
                 }
             }
@@ -207,14 +205,12 @@ def lambda_handler(event, context):
         # EventStream 객체를 직접 로깅하지 않고 결과만 로깅
         logger.info(f"[Agent0] {target_agent_id} 응답 완료, 결과 길이: {len(result) if result else 0}")
         
-        # AWS Bedrock Agent가 기대하는 응답 형식
+        # AWS Bedrock Agent가 기대하는 응답 형식 (간단한 버전)
         return {
             'response': {
                 'responseBody': {
                     'application/json': {
-                        'body': json.dumps({
-                            'message': result
-                        }, ensure_ascii=False)
+                        'body': result
                     }
                 }
             }
@@ -226,9 +222,7 @@ def lambda_handler(event, context):
             'response': {
                 'responseBody': {
                     'application/json': {
-                        'body': json.dumps({
-                            'message': f'Agent0에서 에이전트 호출 중 오류: {str(e)}'
-                        }, ensure_ascii=False)
+                        'body': f'Agent0에서 에이전트 호출 중 오류: {str(e)}'
                     }
                 }
             }
