@@ -246,18 +246,18 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         # === conversationHistory와 sessionAttributes에서 Agent1 응답 확인 ===
         session_attrs = event.get("sessionAttributes", {})
-        conversation_history = event.get("conversationHistory", [])
+        conversation_history = event.get("conversationHistory", {})
         agent1_response_data = session_attrs.get("agent1_response_data")
         agent1_response_processed = session_attrs.get("agent1_response_processed")
         used_session = False
         report_data = None
         
         # 1. conversationHistory에서 Agent1 응답 추출 시도
-        if conversation_history and len(conversation_history) >= 2:
+        if conversation_history and "messages" in conversation_history and len(conversation_history["messages"]) >= 2:
             try:
                 logger.info(f"[Agent2] conversationHistory에서 Agent1 응답 추출 시도")
-                # conversationHistory 구조: [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
-                agent1_response_text = conversation_history[1].get("content", "")
+                # conversationHistory 구조: {"messages": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]}
+                agent1_response_text = conversation_history["messages"][1].get("content", "")
                 logger.info(f"[Agent2] conversationHistory에서 Agent1 응답 길이: {len(agent1_response_text)}")
                 
                 # Agent1 응답에서 JSON 구조 파싱 시도
@@ -341,7 +341,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         if not report_data:
             error_msg = "슈퍼바이저로부터 Agent1 응답 데이터를 받지 못했습니다. conversationHistory 또는 sessionAttributes를 확인해주세요."
             logger.error(f"[Agent2] {error_msg}")
-            logger.error(f"[Agent2] conversationHistory 길이: {len(conversation_history)}")
+            logger.error(f"[Agent2] conversationHistory keys: {list(conversation_history.keys())}")
             logger.error(f"[Agent2] sessionAttributes keys: {list(session_attrs.keys())}")
             return {
                 'completion': f'❌ [Agent2] {error_msg}'

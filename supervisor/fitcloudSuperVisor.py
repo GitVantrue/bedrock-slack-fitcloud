@@ -101,16 +101,18 @@ def lambda_handler(event, context):
                 agent1_result = f"Agent1 호출 실패: {str(e)}"
             
             # conversationHistory 구성
-            conversation_history = [
-                {
-                    "role": "user",
-                    "content": user_input
-                },
-                {
-                    "role": "assistant", 
-                    "content": agent1_result
-                }
-            ]
+            conversation_history = {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": user_input
+                    },
+                    {
+                        "role": "assistant", 
+                        "content": agent1_result
+                    }
+                ]
+            }
             
             # sessionAttributes 추출 및 개선
             if hasattr(agent1_response, 'get'):
