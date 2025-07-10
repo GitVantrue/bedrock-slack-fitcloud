@@ -977,6 +977,29 @@ def process_invoice_response(raw_data, billing_period, account_id=None):
 def lambda_handler(event, context):
     print(f"🚀 통합 Lambda 시작: {event.get('apiPath', 'N/A')}")
     print(f"[DEBUG] Raw event: {json.dumps(event, ensure_ascii=False)[:1000]}")
+    
+    # === conversationHistory와 sessionAttributes 디버깅 로그 추가 ===
+    print(f"[DEBUG][Agent1] conversationHistory 존재 여부: {'conversationHistory' in event}")
+    if 'conversationHistory' in event:
+        conversation_history = event['conversationHistory']
+        print(f"[DEBUG][Agent1] conversationHistory 타입: {type(conversation_history)}")
+        print(f"[DEBUG][Agent1] conversationHistory 내용: {json.dumps(conversation_history, ensure_ascii=False)[:500]}")
+        if isinstance(conversation_history, dict) and 'messages' in conversation_history:
+            print(f"[DEBUG][Agent1] conversationHistory 메시지 수: {len(conversation_history['messages'])}")
+            for i, msg in enumerate(conversation_history['messages']):
+                print(f"[DEBUG][Agent1] 메시지 {i}: role={msg.get('role')}, content 길이={len(str(msg.get('content', '')))}")
+    else:
+        print(f"[DEBUG][Agent1] conversationHistory가 event에 없습니다.")
+    
+    print(f"[DEBUG][Agent1] sessionAttributes 존재 여부: {'sessionAttributes' in event}")
+    if 'sessionAttributes' in event:
+        session_attrs = event['sessionAttributes']
+        print(f"[DEBUG][Agent1] sessionAttributes 타입: {type(session_attrs)}")
+        print(f"[DEBUG][Agent1] sessionAttributes 키 목록: {list(session_attrs.keys())}")
+        print(f"[DEBUG][Agent1] sessionAttributes 내용: {json.dumps(session_attrs, ensure_ascii=False)[:500]}")
+    else:
+        print(f"[DEBUG][Agent1] sessionAttributes가 event에 없습니다.")
+    
     # sessionAttributes 값 로그로 출력
     if 'sessionAttributes' in event:
         print(f"[DEBUG][lambda] 전달받은 sessionAttributes: {json.dumps(event['sessionAttributes'], ensure_ascii=False)}")

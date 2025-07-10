@@ -219,6 +219,28 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     try:
         logger.info(f"[Agent2] event 구조: {json.dumps(event, ensure_ascii=False)}")
         
+        # === conversationHistory와 sessionAttributes 디버깅 로그 추가 ===
+        logger.info(f"[DEBUG][Agent2] conversationHistory 존재 여부: {'conversationHistory' in event}")
+        if 'conversationHistory' in event:
+            conversation_history = event['conversationHistory']
+            logger.info(f"[DEBUG][Agent2] conversationHistory 타입: {type(conversation_history)}")
+            logger.info(f"[DEBUG][Agent2] conversationHistory 내용: {json.dumps(conversation_history, ensure_ascii=False)[:500]}")
+            if isinstance(conversation_history, dict) and 'messages' in conversation_history:
+                logger.info(f"[DEBUG][Agent2] conversationHistory 메시지 수: {len(conversation_history['messages'])}")
+                for i, msg in enumerate(conversation_history['messages']):
+                    logger.info(f"[DEBUG][Agent2] 메시지 {i}: role={msg.get('role')}, content 길이={len(str(msg.get('content', '')))}")
+        else:
+            logger.info(f"[DEBUG][Agent2] conversationHistory가 event에 없습니다.")
+        
+        logger.info(f"[DEBUG][Agent2] sessionAttributes 존재 여부: {'sessionAttributes' in event}")
+        if 'sessionAttributes' in event:
+            session_attrs = event['sessionAttributes']
+            logger.info(f"[DEBUG][Agent2] sessionAttributes 타입: {type(session_attrs)}")
+            logger.info(f"[DEBUG][Agent2] sessionAttributes 키 목록: {list(session_attrs.keys())}")
+            logger.info(f"[DEBUG][Agent2] sessionAttributes 내용: {json.dumps(session_attrs, ensure_ascii=False)[:500]}")
+        else:
+            logger.info(f"[DEBUG][Agent2] sessionAttributes가 event에 없습니다.")
+        
         # 1. 파라미터 추출 (event 구조에 따라 보강)
         params = None
         # 1-1. parameters가 dict로 들어오는 경우

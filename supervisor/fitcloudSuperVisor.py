@@ -18,6 +18,28 @@ def lambda_handler(event, context):
     while isinstance(event, list):
         event = event[0]
 
+    # === conversationHistory와 sessionAttributes 디버깅 로그 추가 ===
+    logger.info(f"[DEBUG][Supervisor] conversationHistory 존재 여부: {'conversationHistory' in event}")
+    if 'conversationHistory' in event:
+        conversation_history = event['conversationHistory']
+        logger.info(f"[DEBUG][Supervisor] conversationHistory 타입: {type(conversation_history)}")
+        logger.info(f"[DEBUG][Supervisor] conversationHistory 내용: {json.dumps(conversation_history, ensure_ascii=False)[:500]}")
+        if isinstance(conversation_history, dict) and 'messages' in conversation_history:
+            logger.info(f"[DEBUG][Supervisor] conversationHistory 메시지 수: {len(conversation_history['messages'])}")
+            for i, msg in enumerate(conversation_history['messages']):
+                logger.info(f"[DEBUG][Supervisor] 메시지 {i}: role={msg.get('role')}, content 길이={len(str(msg.get('content', '')))}")
+    else:
+        logger.info(f"[DEBUG][Supervisor] conversationHistory가 event에 없습니다.")
+    
+    logger.info(f"[DEBUG][Supervisor] sessionAttributes 존재 여부: {'sessionAttributes' in event}")
+    if 'sessionAttributes' in event:
+        session_attrs = event['sessionAttributes']
+        logger.info(f"[DEBUG][Supervisor] sessionAttributes 타입: {type(session_attrs)}")
+        logger.info(f"[DEBUG][Supervisor] sessionAttributes 키 목록: {list(session_attrs.keys())}")
+        logger.info(f"[DEBUG][Supervisor] sessionAttributes 내용: {json.dumps(session_attrs, ensure_ascii=False)[:500]}")
+    else:
+        logger.info(f"[DEBUG][Supervisor] sessionAttributes가 event에 없습니다.")
+
     # user_input 추출 로직 (event 구조에 따라 분기)
     user_input = None
     try:
@@ -182,8 +204,10 @@ def lambda_handler(event, context):
             if conversation_history:
                 session_state["conversationHistory"] = conversation_history
                 logger.info(f"[Agent0] conversationHistory 추가: {len(conversation_history)}개 메시지")
+                logger.info(f"[Agent0] conversationHistory 내용: {json.dumps(conversation_history, ensure_ascii=False)[:500]}")
             
             agent_kwargs["sessionState"] = session_state
+            logger.info(f"[Agent0] sessionState 추가 완료: {json.dumps(session_state, ensure_ascii=False)[:500]}")
         
         try:
             response = client.invoke_agent(**agent_kwargs)
