@@ -374,74 +374,24 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             except Exception as e:
                 logger.error(f"[Agent2] Agent1 응답 파싱 실패: {e}")
         
-        # === 데이터가 없으면 Agent1 직접 호출 ===
+        # === 데이터가 없으면 오류 처리 ===
         if not report_data:
-            logger.info(f"[Agent2] Agent1 응답 데이터가 없어서 Agent1을 직접 호출합니다.")
-            try:
-                # Agent1 직접 호출
-                client = boto3.client("bedrock-agent-runtime")
-                agent1_response = client.invoke_agent(
-                    agentId="NBLVKZOU76",  # Agent1 ID
-                    agentAliasId="Z6NLZGHRTE",  # Agent1 Alias ID
-                    sessionId=session_id,
-                    inputText=user_input
-                )
-                
-                agent1_result = ""
-                for event in agent1_response:
-                    if 'chunk' in event and 'bytes' in event['chunk']:
-                        agent1_result += event['chunk']['bytes'].decode('utf-8')
-                
-                logger.info(f"[Agent2] Agent1 직접 호출 완료, 응답 길이: {len(agent1_result)}")
-                
-                # Agent1 응답을 파싱하여 report_data 생성
-                cost_items = []
-                
-                # "총 온디맨드 사용 금액" 추출
-                import re
-                total_amount_match = re.search(r'총 온디맨드 사용금액:\s*\$([0-9,]+\.?[0-9]*)', agent1_result)
-                if total_amount_match:
-                    total_amount = float(total_amount_match.group(1).replace(',', ''))
-                    cost_items.append({
-                        "service": "Total",
-                        "amount": total_amount,
-                        "description": "총 온디맨드 사용 금액"
-                    })
-                
-                # 서비스별 비용 추출
-                service_matches = re.findall(r'(\d+)\.\s*\*\*([^*]+)\*\*:\s*약\s*\$([0-9,]+)', agent1_result)
-                for match in service_matches:
-                    service_name = match[1].strip()
-                    amount = float(match[2].replace(',', ''))
-                    cost_items.append({
-                        "service": service_name,
-                        "amount": amount,
-                        "description": f"{service_name} 비용"
-                    })
-                
-                if cost_items:
-                    report_data = cost_items
-                    logger.info(f"[Agent2] Agent1 응답에서 {len(cost_items)}개 비용 항목 추출 성공")
-                else:
-                    # 파싱 실패 시 기본 구조로 변환
-                    report_data = [{"message": agent1_result, "type": "text_summary"}]
-                    logger.info(f"[Agent2] Agent1 응답 파싱 실패, 기본 구조로 변환")
-                
-            except Exception as e:
-                logger.error(f"[Agent2] Agent1 직접 호출 실패: {e}")
-                error_msg = f"Agent1 호출 실패: {str(e)}"
-                return {
-                    'response': {
-                        'body': {
-                            'content': [
-                                {
-                                    'type': 'text',
-                                    'text': f'❌ [Agent2] {error_msg}'
-                                }
-                            ]
-                        }
+            error_msg = "Agent1의 데이터가 없습니다. 먼저 비용/사용량을 조회해주세요."
+            logger.error(f"[Agent2] {error_msg}")
+            logger.error(f"[Agent2] conversationHistory keys: {list(conversation_history.keys())}")
+            logger.error(f"[Agent2] sessionAttributes keys: {list(session_attrs.keys())}")
+            return {
+                'response': {
+                    'body': {
+                        'content': [
+                            {
+                                'type': 'text',
+                                'text': f'❌ [Agent2] {error_msg}'
+                            }
+                        ]
                     }
                 }
+            }
 
         # 데이터 검증
         if not report_data or not isinstance(report_data, list) or len(report_data) == 0:
