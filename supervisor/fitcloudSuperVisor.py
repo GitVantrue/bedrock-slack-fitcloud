@@ -46,10 +46,16 @@ def lambda_handler(event, context):
     if not user_input:
         logger.error("[Agent0] user_input 파라미터가 없습니다.")
         return {
-            'statusCode': HTTPStatus.BAD_REQUEST,
-            'body': json.dumps({
-                'message': 'user_input 파라미터가 필요합니다.'
-            }, ensure_ascii=False)
+            'response': {
+                'body': {
+                    'content': [
+                        {
+                            'type': 'text',
+                            'text': 'user_input 파라미터가 필요합니다.'
+                        }
+                    ]
+                }
+            }
         }
 
     try:
@@ -181,18 +187,32 @@ def lambda_handler(event, context):
         
         # EventStream 객체를 직접 로깅하지 않고 결과만 로깅
         logger.info(f"[Agent0] {target_agent_id} 응답 완료, 결과 길이: {len(result) if result else 0}")
+        
+        # AWS Bedrock Agent가 기대하는 응답 형식
         return {
-            'statusCode': 200,
-            'body': json.dumps({
-                'message': result
-            }, ensure_ascii=False)
+            'response': {
+                'body': {
+                    'content': [
+                        {
+                            'type': 'text',
+                            'text': result
+                        }
+                    ]
+                }
+            }
         }
 
     except Exception as e:
         logger.error(f"[Agent0] 에이전트 호출 중 오류: {e}", exc_info=True)
         return {
-            'statusCode': HTTPStatus.INTERNAL_SERVER_ERROR,
-            'body': json.dumps({
-                'message': f'Agent0에서 에이전트 호출 중 오류: {str(e)}'
-            }, ensure_ascii=False)
+            'response': {
+                'body': {
+                    'content': [
+                        {
+                            'type': 'text',
+                            'text': f'Agent0에서 에이전트 호출 중 오류: {str(e)}'
+                        }
+                    ]
+                }
+            }
         } 
