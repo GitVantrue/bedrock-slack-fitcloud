@@ -13,7 +13,7 @@ from collections import defaultdict
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Agent1 람다 이름
+# Agent1 람다 이름 (슈퍼바이저가 처리하므로 선택사항)
 AGENT1_LAMBDA_NAME = os.environ.get("AGENT1_LAMBDA_NAME", "fitcloud_action_part1-wpfe6")
 
 # 슬랙 토큰/채널ID를 환경변수에서 가져오기 (보안상 하드코딩 금지)

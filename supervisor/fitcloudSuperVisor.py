@@ -74,11 +74,19 @@ def lambda_handler(event, context):
                             agent1_result += event['chunk']['bytes'].decode('utf-8')
                 except Exception as e:
                     logger.error(f"Agent1 EventStream 파싱 실패: {e}")
-            # sessionAttributes 추출
+            
+            # sessionAttributes 추출 및 개선
             if hasattr(agent1_response, 'get'):
-                session_attributes = agent1_response.get("sessionAttributes")
-            if not session_attributes:
+                session_attributes = agent1_response.get("sessionAttributes", {})
+            else:
                 session_attributes = {}
+            
+            # Agent1 결과를 sessionAttributes에 저장 (Agent2가 활용할 수 있도록)
+            if agent1_result:
+                session_attributes["last_cost_message"] = agent1_result
+                # Agent1에서 표 데이터가 있다면 그것도 저장
+                if "표" in agent1_result or "데이터" in agent1_result:
+                    session_attributes["last_cost_table"] = agent1_result
         # Agent2 호출 시 sessionAttributes 전달
         agent2_kwargs = dict(
             agentId=target_agent_id,
