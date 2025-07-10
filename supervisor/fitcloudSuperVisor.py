@@ -96,7 +96,6 @@ def lambda_handler(event, context):
             # Bedrock Agent Runtime 호출
             client = boto3.client("bedrock-agent-runtime")
             session_attributes = {}
-            conversation_history = None
             
             # 1단계: Agent1 호출 (데이터 수집)
             logger.info(f"[Agent0] 1단계: Agent1({AGENT1_ID}) 호출 시작")
@@ -106,66 +105,36 @@ def lambda_handler(event, context):
                 sessionId=session_id,
                 inputText=user_input
             )
-            agent1_result = ""
-            agent1_response_data = None
+            agent1_result_text = ""
             try:
-                # EventStream 객체 처리
                 for event in agent1_response:
                     if 'chunk' in event and 'bytes' in event['chunk']:
-                        chunk_data = event['chunk']['bytes'].decode('utf-8')
-                        agent1_result += chunk_data
-                        # JSON 응답 구조 파싱 시도
-                        try:
-                            if chunk_data.strip().startswith('{'):
-                                parsed_chunk = json.loads(chunk_data)
-                                if 'response' in parsed_chunk or 'body' in parsed_chunk:
-                                    agent1_response_data = parsed_chunk
-                        except json.JSONDecodeError:
-                            pass  # JSON이 아닌 경우 무시
+                        agent1_result_text += event['chunk']['bytes'].decode('utf-8')
             except Exception as e:
                 logger.error(f"Agent1 EventStream 파싱 실패: {e}")
-                agent1_result = f"Agent1 호출 실패: {str(e)}"
-            logger.info(f"[Agent0] Agent1 응답 완료, 길이: {len(agent1_result)}")
-
-            # Agent1 응답을 conversationHistory에 반드시 저장
-            conversation_history = {
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [user_input]
-                    },
-                    {
-                        "role": "assistant",
-                        "content": [agent1_result]
-                    }
-                ]
-            }
-            logger.info(f"[Agent0] conversationHistory 생성 및 저장 완료")
-
-            # sessionAttributes도 항상 dict로 초기화
-            if not session_attributes:
-                session_attributes = {}
-            # Agent1의 JSON 응답이 있으면 sessionAttributes에 저장(선택)
-            if agent1_response_data:
-                session_attributes["agent1_response_data"] = json.dumps(agent1_response_data, ensure_ascii=False)
-                session_attributes["agent1_response_processed"] = "true"
+                agent1_result_text = f"Agent1 호출 실패: {str(e)}"
+            if not agent1_result_text:
+                agent1_result_text = "[Agent0] Agent1으로부터 유효한 응답을 받지 못했습니다."
+            logger.info(f"[Agent0] Agent1 최종 응답 텍스트: {repr(agent1_result_text)[:500]}")
 
             # 2단계: Agent2 호출 (보고서 생성)
             target_agent_id = AGENT2_ID
             target_agent_alias = AGENT2_ALIAS
             logger.info(f"[Agent0] 2단계: Agent2({target_agent_id}) 호출 시작")
 
+            # Agent1의 결과를 inputText에 명시적으로 포함
+            agent2_input_text = f"보고서를 만들어주세요. 조회된 데이터:\n{agent1_result_text}"
             agent_kwargs = dict(
                 agentId=target_agent_id,
                 agentAliasId=target_agent_alias,
                 sessionId=session_id,
-                inputText="해당 답변으로 보고서 만들어줘",  # 실제 사용자 입력을 넣어도 됨
+                inputText=agent2_input_text,
                 sessionState={
-                    "conversationHistory": conversation_history,
                     "sessionAttributes": session_attributes
                 }
             )
-            logger.info(f"[Agent0] Agent2 호출용 sessionState: {json.dumps(agent_kwargs['sessionState'], ensure_ascii=False)[:500]}")
+            logger.info(f"[Agent0] Agent2 호출용 inputText: {agent2_input_text[:300]}")
+            logger.info(f"[Agent0] Agent2 호출용 sessionAttributes: {json.dumps(session_attributes, ensure_ascii=False)[:300]}")
 
             try:
                 response = client.invoke_agent(**agent_kwargs)
