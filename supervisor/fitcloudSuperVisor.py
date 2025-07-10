@@ -97,14 +97,21 @@ def lambda_handler(event, context):
                 # Agent1에서 표 데이터가 있다면 그것도 저장
                 if "표" in agent1_result or "데이터" in agent1_result:
                     session_attributes["last_cost_table"] = str(agent1_result)
-        # Agent2 호출 시 sessionState 전달
+        # Agent2 호출 시 sessionState 전달 (Agent1 응답 포함)
         agent2_kwargs = dict(
             agentId=target_agent_id,
             agentAliasId=target_agent_alias,
             sessionId="your-session-id",
             inputText=user_input
         )
+        
+        # Agent1 응답을 sessionAttributes에 저장하여 Agent2에 전달
         if session_attributes:
+            # Agent1의 응답 데이터를 JSON 문자열로 저장
+            if agent1_result:
+                session_attributes["agent1_response_data"] = json.dumps(agent1_result, ensure_ascii=False)
+                session_attributes["agent1_response_processed"] = "true"
+            
             agent2_kwargs["sessionState"] = {
                 "sessionAttributes": session_attributes
             }

@@ -244,20 +244,49 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 params = {"user_input": params}
         logger.info(f"[Agent2] 입력 파라미터: {params}")
 
-        # === sessionAttributes에서 표/메시지 활용 시도 ===
+        # === sessionAttributes에서 Agent1 응답 확인 ===
         session_attrs = event.get("sessionAttributes", {})
-        last_cost_table = session_attrs.get("last_cost_table")
-        last_cost_message = session_attrs.get("last_cost_message")
+        agent1_response_data = session_attrs.get("agent1_response_data")
+        agent1_response_processed = session_attrs.get("agent1_response_processed")
         used_session = False
         report_data = None
         
-        if last_cost_table:
+        if agent1_response_data and agent1_response_processed == "true":
             try:
-                report_data = json.loads(last_cost_table)
-                used_session = True
-                logger.info(f"[Agent2] sessionAttributes에서 표/메시지 활용")
+                agent1_result = json.loads(agent1_response_data)
+                logger.info(f"[Agent2] sessionAttributes에서 Agent1 응답 활용")
+                
+                # Agent1 응답에서 데이터 추출
+                if 'response' in agent1_result and 'responseBody' in agent1_result['response'].get('application/json', {}):
+                    body_str = agent1_result['response']['application/json']['body']
+                    logger.info(f"[Agent2] Agent1 body_str: {body_str}")
+                    try:
+                        body_json = json.loads(body_str)
+                        report_data = body_json.get('cost_items') or body_json.get('data') or body_json
+                        logger.info(f"[Agent2] Agent1 응답에서 추출된 데이터: {report_data}")
+                        used_session = True
+                    except Exception as e:
+                        logger.error(f"[Agent2] Agent1 body_str 파싱 실패: {e}")
+                elif 'body' in agent1_result:
+                    body_str = agent1_result['body']
+                    logger.info(f"[Agent2] Agent1 body: {body_str}")
+                    try:
+                        if isinstance(body_str, str):
+                            body_json = json.loads(body_str)
+                            report_data = body_json.get('cost_items') or body_json.get('data') or body_json
+                        else:
+                            report_data = body_str
+                        logger.info(f"[Agent2] Agent1 body에서 추출된 데이터: {report_data}")
+                        used_session = True
+                    except Exception as e:
+                        logger.error(f"[Agent2] Agent1 body 파싱 실패: {e}")
+                else:
+                    report_data = agent1_result
+                    logger.info(f"[Agent2] Agent1 직접 데이터: {report_data}")
+                    used_session = True
+                    
             except Exception as e:
-                logger.error(f"[Agent2] last_cost_table 파싱 실패: {e}")
+                logger.error(f"[Agent2] Agent1 응답 파싱 실패: {e}")
                 
         # === sessionAttributes 값이 없으면 기존처럼 Agent1 람다 호출 ===
         if not report_data:
@@ -288,20 +317,44 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             try:
                 agent1_result = json.load(agent1_response['Payload'])
                 logger.info(f"[Agent2] Agent1 람다 응답: {agent1_result}")
-                # Bedrock Agent 람다 응답 구조에 따라 body 파싱 (app.py 스타일로 개선)
-                if 'response' in agent1_result and 'responseBody' in agent1_result['response']['application/json']:
+                
+                # Agent1 응답 구조 분석 및 데이터 추출
+                report_data = None
+                
+                # 1. Bedrock Agent 람다 응답 구조 확인
+                if 'response' in agent1_result and 'responseBody' in agent1_result['response'].get('application/json', {}):
                     body_str = agent1_result['response']['application/json']['body']
+                    logger.info(f"[Agent2] body_str: {body_str}")
                     try:
                         body_json = json.loads(body_str)
-                        # app.py와 동일한 데이터 추출 로직 적용
                         report_data = body_json.get('cost_items') or body_json.get('data') or body_json
+                        logger.info(f"[Agent2] body_json에서 추출된 데이터: {report_data}")
                     except Exception as e:
                         logger.error(f"[Agent2] body_str 파싱 실패: {e}")
                         report_data = body_str
+                # 2. 일반적인 람다 응답 구조 확인
+                elif 'body' in agent1_result:
+                    body_str = agent1_result['body']
+                    logger.info(f"[Agent2] body: {body_str}")
+                    try:
+                        if isinstance(body_str, str):
+                            body_json = json.loads(body_str)
+                            report_data = body_json.get('cost_items') or body_json.get('data') or body_json
+                        else:
+                            report_data = body_str
+                        logger.info(f"[Agent2] body에서 추출된 데이터: {report_data}")
+                    except Exception as e:
+                        logger.error(f"[Agent2] body 파싱 실패: {e}")
+                        report_data = body_str
+                # 3. 직접 데이터가 있는 경우
                 else:
-                    report_data = agent1_result.get('body') or agent1_result
+                    report_data = agent1_result
+                    logger.info(f"[Agent2] 직접 사용할 데이터: {report_data}")
+                    
             except Exception as e:
                 logger.error(f"[Agent2] Agent1 람다 응답 파싱 실패: {e}")
+                import traceback
+                logger.error(f"[Agent2] 파싱 실패 상세: {traceback.format_exc()}")
                 raise
 
         # app.py 스타일의 데이터 검증 추가
