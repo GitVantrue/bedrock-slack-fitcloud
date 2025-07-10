@@ -9,6 +9,7 @@ import openpyxl
 from openpyxl.chart import BarChart, Reference
 import io
 from collections import defaultdict
+import re
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)

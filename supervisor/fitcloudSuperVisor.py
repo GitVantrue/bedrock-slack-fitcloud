@@ -49,9 +49,11 @@ def lambda_handler(event, context):
                 }
             }
         }
+    # 세션 ID 추출 (Bedrock Agent의 세션 ID 사용)
+    session_id = event.get("sessionId", "default-supervisor-session-fallback")
+    logger.info(f"[Supervisor] 현재 세션 ID: {session_id}")
     # Bedrock Agent Runtime 클라이언트
     client = boto3.client("bedrock-agent-runtime")
-    session_id = f"supervisor-session"
     # 1. Agent1 직접 호출
     logger.info(f"[Supervisor] Agent1({AGENT1_ID}) 호출 시작")
     agent1_response = client.invoke_agent(
@@ -65,10 +67,8 @@ def lambda_handler(event, context):
     for event in agent1_response:
         if 'chunk' in event and 'bytes' in event['chunk']:
             raw_agent1_response += event['chunk']['bytes'].decode('utf-8')
-
-    # 2. 마크다운 텍스트만 추출
+    # 2. 마크다운 텍스트만 추출 (JSON 파싱 우선)
     agent1_result_text = extract_markdown_from_agent1(raw_agent1_response)
-
     # 3. Agent2 호출
     agent2_input_text = f"보고서를 만들어주세요. 조회된 데이터:\n{agent1_result_text}"
     logger.info(f"[Supervisor] Agent2 호출용 inputText: {agent2_input_text[:300]}")
@@ -107,13 +107,27 @@ def lambda_handler(event, context):
     }
 
 def extract_markdown_from_agent1(raw_response: str) -> str:
-    # [RESPONSE][message] 이후 ~ END까지 추출
-    match = re.search(r"\[RESPONSE\]\[message\](.*)", raw_response, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    # 또는, *━━━━━━━━━━━━━━━━━━━━━━* 등 마크다운 패턴으로 추출
-    md_match = re.search(r"(\*━━━━━━━━+.*?)(?:END RequestId|$)", raw_response, re.DOTALL)
-    if md_match:
-        return md_match.group(1).strip()
-    # fallback: 전체 raw 반환
-    return raw_response.strip() 
+    try:
+        # 1. JSON 파싱 시도
+        parsed_json = json.loads(raw_response)
+        if 'output' in parsed_json and \
+           'message' in parsed_json['output'] and \
+           'content' in parsed_json['output']['message'] and \
+           len(parsed_json['output']['message']['content']) > 0 and \
+           'text' in parsed_json['output']['message']['content'][0]:
+            logger.info("[Supervisor] Agent1 JSON 응답에서 텍스트 추출 성공.")
+            return parsed_json['output']['message']['content'][0]['text'].strip()
+        logger.warning(f"[Supervisor] Agent1 JSON 응답이지만 예상 경로에서 텍스트를 찾을 수 없음. 원본: {raw_response[:200]}")
+        return raw_response.strip()
+    except json.JSONDecodeError:
+        logger.info("[Supervisor] Agent1 응답이 JSON 형식이 아님. 정규식 추출 시도.")
+        match = re.search(r"\[RESPONSE\]\[message\](.*)", raw_response, re.DOTALL)
+        if match:
+            logger.info("[Supervisor] [RESPONSE][message] 패턴으로 텍스트 추출 성공.")
+            return match.group(1).strip()
+        md_match = re.search(r"(\*━━━━━━━━+.*?)(?:END RequestId|$)", raw_response, re.DOTALL)
+        if md_match:
+            logger.info("[Supervisor] 마크다운 패턴으로 텍스트 추출 성공.")
+            return md_match.group(1).strip()
+        logger.warning("[Supervisor] 특정 패턴으로 텍스트 추출 실패. Agent1 원본 응답 반환.")
+        return raw_response.strip() 
