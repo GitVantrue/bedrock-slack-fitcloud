@@ -110,8 +110,8 @@ def lambda_handler(event, context):
             except Exception as e:
                 logger.error(f"EventStream 파싱 실패: {e}")
                 result = f"[Agent0] EventStream 파싱 실패: {str(e)}"
-        # result가 비어 있거나, EventStream 객체의 string 표현이면 에러 메시지로 대체
-        if not result or (isinstance(result, str) and result.startswith('<botocore.eventstream.EventStream')):
+        # result가 비어 있으면 에러 메시지로 대체
+        if not result:
             result = "[Agent0] Bedrock Agent 응답 파싱 실패 또는 빈 응답"
         logger.info(f"[Agent0] {target_agent_id} 응답: {result}")
         return {

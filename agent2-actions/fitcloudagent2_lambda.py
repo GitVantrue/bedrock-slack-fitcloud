@@ -264,11 +264,20 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             client = boto3.client("lambda")
             logger.info(f"[Agent2] Agent1 람다 호출 시작 - 함수명: {AGENT1_LAMBDA_NAME}")
             try:
-                logger.info(f"[Agent2] Agent1 호출 payload: {json.dumps(event, ensure_ascii=False)}")
+                # Agent1 호출을 위한 payload 구성
+                agent1_payload = {
+                    "actionGroup": "fitcloud_action_part1",
+                    "action": "get_cost_data",
+                    "parameters": [
+                        {"name": "from", "value": "202505"},
+                        {"name": "to", "value": "202505"}
+                    ]
+                }
+                logger.info(f"[Agent2] Agent1 호출 payload: {json.dumps(agent1_payload, ensure_ascii=False)}")
                 agent1_response = client.invoke(
                     FunctionName=AGENT1_LAMBDA_NAME,
                     InvocationType='RequestResponse',
-                    Payload=json.dumps(event)
+                    Payload=json.dumps(agent1_payload)
                 )
                 logger.info(f"[Agent2] Agent1 람다 호출 완료 - 응답: {agent1_response}")
             except Exception as e:
