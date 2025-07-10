@@ -256,8 +256,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         if conversation_history and "messages" in conversation_history and len(conversation_history["messages"]) >= 2:
             try:
                 logger.info(f"[Agent2] conversationHistory에서 Agent1 응답 추출 시도")
-                # conversationHistory 구조: {"messages": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]}
-                agent1_response_text = conversation_history["messages"][1].get("content", "")
+                # conversationHistory 구조: {"messages": [{"role": "user", "content": ["..."]}, {"role": "assistant", "content": ["..."]}]}
+                agent1_response_text = conversation_history["messages"][1].get("content", [""])[0]
                 logger.info(f"[Agent2] conversationHistory에서 Agent1 응답 길이: {len(agent1_response_text)}")
                 
                 # Agent1 응답에서 JSON 구조 파싱 시도

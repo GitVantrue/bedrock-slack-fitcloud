@@ -105,11 +105,11 @@ def lambda_handler(event, context):
                 "messages": [
                     {
                         "role": "user",
-                        "content": user_input
+                        "content": [user_input]
                     },
                     {
                         "role": "assistant", 
-                        "content": agent1_result
+                        "content": [agent1_result]
                     }
                 ]
             }
