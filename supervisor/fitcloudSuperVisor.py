@@ -105,23 +105,26 @@ def lambda_handler(event, context):
         )
         if session_attributes:
             agent2_kwargs["sessionAttributes"] = session_attributes
-        response = client.invoke_agent(**agent2_kwargs)
-        # EventStream 객체 대응: completion 필드가 없으면 직접 파싱
-        result = ""
-        if hasattr(response, 'get') and 'completion' in response:
-            result = response.get("completion", "")
-        else:
+        
+        try:
+            response = client.invoke_agent(**agent2_kwargs)
             # EventStream 객체 직접 파싱
+            result = ""
             try:
                 for event in response:
-                    if 'chunk' in event:
+                    if 'chunk' in event and 'bytes' in event['chunk']:
                         result += event['chunk']['bytes'].decode('utf-8')
             except Exception as e:
                 logger.error(f"EventStream 파싱 실패: {e}")
                 result = f"[Agent0] EventStream 파싱 실패: {str(e)}"
-        # result가 비어 있으면 에러 메시지로 대체
-        if not result:
-            result = "[Agent0] Bedrock Agent 응답 파싱 실패 또는 빈 응답"
+            
+            # result가 비어 있으면 에러 메시지로 대체
+            if not result:
+                result = "[Agent0] Bedrock Agent 응답 파싱 실패 또는 빈 응답"
+                
+        except Exception as e:
+            logger.error(f"Agent 호출 실패: {e}")
+            result = f"[Agent0] Agent 호출 실패: {str(e)}"
         logger.info(f"[Agent0] {target_agent_id} 응답: {result}")
         return {
             'statusCode': 200,
