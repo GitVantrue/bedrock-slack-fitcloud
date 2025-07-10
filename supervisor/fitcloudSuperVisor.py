@@ -74,15 +74,14 @@ def lambda_handler(event, context):
                 inputText=user_input
             )
             agent1_result = ""
-            if hasattr(agent1_response, 'get') and 'completion' in agent1_response:
-                agent1_result = agent1_response.get("completion", "")
-            else:
-                try:
-                    for event in agent1_response:
-                        if 'chunk' in event:
-                            agent1_result += event['chunk']['bytes'].decode('utf-8')
-                except Exception as e:
-                    logger.error(f"Agent1 EventStream 파싱 실패: {e}")
+            try:
+                # EventStream 객체 처리
+                for event in agent1_response:
+                    if 'chunk' in event and 'bytes' in event['chunk']:
+                        agent1_result += event['chunk']['bytes'].decode('utf-8')
+            except Exception as e:
+                logger.error(f"Agent1 EventStream 파싱 실패: {e}")
+                agent1_result = f"Agent1 호출 실패: {str(e)}"
             
             # sessionAttributes 추출 및 개선
             if hasattr(agent1_response, 'get'):
@@ -92,10 +91,10 @@ def lambda_handler(event, context):
             
             # Agent1 결과를 sessionAttributes에 저장 (Agent2가 활용할 수 있도록)
             if agent1_result:
-                session_attributes["last_cost_message"] = agent1_result
+                session_attributes["last_cost_message"] = str(agent1_result)
                 # Agent1에서 표 데이터가 있다면 그것도 저장
                 if "표" in agent1_result or "데이터" in agent1_result:
-                    session_attributes["last_cost_table"] = agent1_result
+                    session_attributes["last_cost_table"] = str(agent1_result)
         # Agent2 호출 시 sessionState 전달
         agent2_kwargs = dict(
             agentId=target_agent_id,
