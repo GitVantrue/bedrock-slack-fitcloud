@@ -1012,65 +1012,73 @@ def lambda_handler(event, context):
     input_text = event.get('inputText', '').lower()
     api_path_from_event = event.get('apiPath', '')
 
-    # 태그 API 우선 분기
+    # --- 분기 로직 개선 시작 ---
+    # 특수 키워드 정의
+    usage_keywords = ['순수 온디맨드', '순수 사용량', '할인 미적용', 'ri/sp 제외', '원가 기준', '할인 금액이 포함되지 않은', '할인 전 금액', '정가 기준', 'pure usage']
+    invoice_keywords = ['청구서', 'invoice', '인보이스', '최종 청구 금액', '실제 결제 금액', '실제 지불 금액']
+    tag_keywords = ['태그', 'tag']
+    
+    # 키워드 판별
+    is_usage_request = any(k in input_text for k in usage_keywords)
+    is_invoice_request = any(k in input_text for k in invoice_keywords)
+    is_tag_usage = any(k in input_text for k in tag_keywords)
+    has_account_id = 'accountId' in params and params['accountId']
+    from_str = str(params.get('from', ''))
+    to_str = str(params.get('to', ''))
+    is_daily = len(from_str) == 8 and from_str.isdigit() and len(to_str) == 8 and to_str.isdigit()
+    is_monthly = len(from_str) == 6 and from_str.isdigit() and len(to_str) == 6 and to_str.isdigit()
+    
+    # 태그별 usage API
     if 'beginDate' in params and 'endDate' in params:
         target_api_path = '/usage/ondemand/tags'
         api_type = 'usage_tag'
         print(f"[DEBUG] 태그 API 분기: {target_api_path}")
-    else:
-        # 이하 기존 분기 로직 유지
-        # 2. 사용자 의도/지침서 기반 API 분기
-        is_invoice_request = any(k in input_text for k in ['청구서', 'invoice', '인보이스', '최종 청구 금액', '실제 결제 금액', '실제 지불 금액'])
-        is_usage_request = any(k in input_text for k in ['순수 온디맨드', '순수 사용량', '할인 미적용', 'ri/sp 제외', '원가 기준', '할인 금액이 포함되지 않은', '할인 전 금액', '정가 기준', 'pure usage'])
-        is_tag_usage = '태그' in input_text or 'tag' in input_text
-        has_account = 'accountId' in params or 'accountName' in params or any(k in input_text for k in ['계정', 'account', '개발계정', 'dev'])
-        target_api_path = None
-        api_type = None
-        if api_path_from_event == '/accounts':
-            target_api_path = '/accounts'
-            api_type = 'accounts'
-        elif is_invoice_request:
-            if has_account:
-                target_api_path = '/invoice/account/monthly'
-                api_type = 'invoice_account'
-            else:
-                target_api_path = '/invoice/corp/monthly'
-                api_type = 'invoice_corp'
-        elif is_usage_request:
-            if is_tag_usage:
-                target_api_path = '/usage/ondemand/tags'
-                api_type = 'usage_tag'
-            else:
-                # 날짜 형식에 따라 daily/monthly, accountId 유무에 따라 account/corp로 분기
-                from_str = str(params.get('from', ''))
-                is_daily = len(from_str) == 8 and from_str.isdigit()
-                is_monthly = len(from_str) == 6 and from_str.isdigit()
-                has_account_id = 'accountId' in params and params['accountId']
-                if is_daily:
-                    target_api_path = '/usage/ondemand/daily'
-                    api_type = 'usage_daily'
-                elif is_monthly:
-                    target_api_path = '/usage/ondemand/monthly'
-                    api_type = 'usage_monthly'
-                else:
-                    # 기본값: corp monthly
-                    target_api_path = '/usage/ondemand/monthly'
-                    api_type = 'usage_monthly'
+    elif is_invoice_request:
+        if has_account_id:
+            target_api_path = '/invoice/account/monthly'
+            api_type = 'invoice_account'
         else:
-            if 'from' in params and len(str(params['from'])) == 8:
-                if 'accountId' in params and params['accountId']:
-                    target_api_path = '/costs/ondemand/account/daily'
-                else:
-                    target_api_path = '/costs/ondemand/corp/daily'
-                api_type = 'costs_daily'
+            target_api_path = '/invoice/corp/monthly'
+            api_type = 'invoice_corp'
+        print(f"[DEBUG] 인보이스 API 분기: {target_api_path}")
+    elif is_usage_request:
+        # usage API는 법인 전체만 지원, 계정별 요청 시 안내
+        if has_account_id:
+            print(f"[ERROR] 순수 온디맨드/사용량은 법인 전체 기준만 지원. 계정별 요청 불가.")
+            return create_bedrock_response(event, 400, error_message="순수 온디맨드/순수 사용량/할인 미적용 등은 법인 전체 기준만 지원합니다. 계정별로는 조회할 수 없습니다.")
+        if is_daily:
+            target_api_path = '/usage/ondemand/daily'
+            api_type = 'usage_daily'
+        elif is_monthly:
+            target_api_path = '/usage/ondemand/monthly'
+            api_type = 'usage_monthly'
+        else:
+            # 기본값: 월별
+            target_api_path = '/usage/ondemand/monthly'
+            api_type = 'usage_monthly'
+        print(f"[DEBUG] usage API 분기: {target_api_path}")
+    else:
+        # 일반 비용/사용량(costs API)
+        if is_daily:
+            if has_account_id:
+                target_api_path = '/costs/ondemand/account/daily'
+                api_type = 'costs_daily_account'
             else:
-                if 'accountId' in params and params['accountId']:
-                    target_api_path = '/costs/ondemand/account/monthly'
-                else:
-                    target_api_path = '/costs/ondemand/corp/monthly'
-                api_type = 'costs_monthly'
-
-    print(f"[DEBUG] API 분기: {target_api_path} ({api_type})")
+                target_api_path = '/costs/ondemand/corp/daily'
+                api_type = 'costs_daily_corp'
+        elif is_monthly:
+            if has_account_id:
+                target_api_path = '/costs/ondemand/account/monthly'
+                api_type = 'costs_monthly_account'
+            else:
+                target_api_path = '/costs/ondemand/corp/monthly'
+                api_type = 'costs_monthly_corp'
+        else:
+            # 기본값: 월별 법인
+            target_api_path = '/costs/ondemand/corp/monthly'
+            api_type = 'costs_monthly_corp'
+        print(f"[DEBUG] costs API 분기: {target_api_path}")
+    # --- 분기 로직 개선 끝 ---
 
     # 4. 필수 파라미터 검증
     date_warnings = validate_date_logic(params, target_api_path)
