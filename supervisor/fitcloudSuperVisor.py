@@ -67,6 +67,8 @@ def lambda_handler(event, context):
         client = boto3.client("bedrock-agent-runtime")
         # Agent1 먼저 호출해서 sessionAttributes 확보 (Agent2 키워드일 때만)
         session_attributes = None
+        conversation_history = []
+        
         if target_agent_id == AGENT2_ID:
             # Agent1 호출
             agent1_response = client.invoke_agent(
@@ -76,14 +78,39 @@ def lambda_handler(event, context):
                 inputText=user_input
             )
             agent1_result = ""
+            agent1_response_data = None
+            
             try:
                 # EventStream 객체 처리
                 for event in agent1_response:
                     if 'chunk' in event and 'bytes' in event['chunk']:
-                        agent1_result += event['chunk']['bytes'].decode('utf-8')
+                        chunk_data = event['chunk']['bytes'].decode('utf-8')
+                        agent1_result += chunk_data
+                        
+                        # JSON 응답 구조 파싱 시도
+                        try:
+                            if chunk_data.strip().startswith('{'):
+                                parsed_chunk = json.loads(chunk_data)
+                                if 'response' in parsed_chunk or 'body' in parsed_chunk:
+                                    agent1_response_data = parsed_chunk
+                        except json.JSONDecodeError:
+                            pass  # JSON이 아닌 경우 무시
+                            
             except Exception as e:
                 logger.error(f"Agent1 EventStream 파싱 실패: {e}")
                 agent1_result = f"Agent1 호출 실패: {str(e)}"
+            
+            # conversationHistory 구성
+            conversation_history = [
+                {
+                    "role": "user",
+                    "content": user_input
+                },
+                {
+                    "role": "assistant", 
+                    "content": agent1_result
+                }
+            ]
             
             # sessionAttributes 추출 및 개선
             if hasattr(agent1_response, 'get'):
@@ -94,9 +121,22 @@ def lambda_handler(event, context):
             # Agent1 결과를 sessionAttributes에 저장 (Agent2가 활용할 수 있도록)
             if agent1_result:
                 session_attributes["last_cost_message"] = str(agent1_result)
+                
+                # Agent1 응답 데이터 저장 (우선순위: 파싱된 JSON > 전체 텍스트)
+                if agent1_response_data:
+                    session_attributes["agent1_response_data"] = json.dumps(agent1_response_data, ensure_ascii=False)
+                    logger.info(f"[Agent0] Agent1 JSON 응답 저장 완료")
+                else:
+                    # JSON 파싱 실패 시 전체 응답을 저장
+                    session_attributes["agent1_response_data"] = json.dumps({"body": agent1_result}, ensure_ascii=False)
+                    logger.info(f"[Agent0] Agent1 텍스트 응답 저장 완료")
+                
+                session_attributes["agent1_response_processed"] = "true"
+                
                 # Agent1에서 표 데이터가 있다면 그것도 저장
                 if "표" in agent1_result or "데이터" in agent1_result:
                     session_attributes["last_cost_table"] = str(agent1_result)
+        
         # Agent2 호출 시 sessionState 전달 (Agent1 응답 포함)
         agent2_kwargs = dict(
             agentId=target_agent_id,
@@ -105,16 +145,17 @@ def lambda_handler(event, context):
             inputText=user_input
         )
         
-        # Agent1 응답을 sessionAttributes에 저장하여 Agent2에 전달
-        if session_attributes:
-            # Agent1의 응답 데이터를 JSON 문자열로 저장
-            if agent1_result:
-                session_attributes["agent1_response_data"] = json.dumps(agent1_result, ensure_ascii=False)
-                session_attributes["agent1_response_processed"] = "true"
-            
-            agent2_kwargs["sessionState"] = {
-                "sessionAttributes": session_attributes
-            }
+        # sessionState 구성 (conversationHistory 포함)
+        session_state = {
+            "sessionAttributes": session_attributes or {}
+        }
+        
+        # conversationHistory가 있으면 추가
+        if conversation_history:
+            session_state["conversationHistory"] = conversation_history
+            logger.info(f"[Agent0] conversationHistory 추가: {len(conversation_history)}개 메시지")
+        
+        agent2_kwargs["sessionState"] = session_state
         
         try:
             response = client.invoke_agent(**agent2_kwargs)

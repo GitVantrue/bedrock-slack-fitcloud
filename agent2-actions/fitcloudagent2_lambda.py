@@ -244,14 +244,63 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 params = {"user_input": params}
         logger.info(f"[Agent2] 입력 파라미터: {params}")
 
-        # === sessionAttributes에서 Agent1 응답 확인 (메모리 효율적으로) ===
+        # === conversationHistory와 sessionAttributes에서 Agent1 응답 확인 ===
         session_attrs = event.get("sessionAttributes", {})
+        conversation_history = event.get("conversationHistory", [])
         agent1_response_data = session_attrs.get("agent1_response_data")
         agent1_response_processed = session_attrs.get("agent1_response_processed")
         used_session = False
         report_data = None
         
-        if agent1_response_data and agent1_response_processed == "true":
+        # 1. conversationHistory에서 Agent1 응답 추출 시도
+        if conversation_history and len(conversation_history) >= 2:
+            try:
+                logger.info(f"[Agent2] conversationHistory에서 Agent1 응답 추출 시도")
+                # conversationHistory 구조: [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
+                agent1_response_text = conversation_history[1].get("content", "")
+                logger.info(f"[Agent2] conversationHistory에서 Agent1 응답 길이: {len(agent1_response_text)}")
+                
+                # Agent1 응답에서 JSON 구조 파싱 시도
+                try:
+                    # JSON 응답인지 확인
+                    if agent1_response_text.strip().startswith('{'):
+                        agent1_json = json.loads(agent1_response_text)
+                        if 'response' in agent1_json and 'responseBody' in agent1_json['response'].get('application/json', {}):
+                            body_str = agent1_json['response']['application/json']['body']
+                            body_json = json.loads(body_str)
+                            report_data = body_json.get('cost_items') or body_json.get('data') or body_json
+                            logger.info(f"[Agent2] conversationHistory에서 JSON 데이터 추출 성공")
+                            used_session = True
+                        elif 'body' in agent1_json:
+                            body_str = agent1_json['body']
+                            if isinstance(body_str, str):
+                                body_json = json.loads(body_str)
+                                report_data = body_json.get('cost_items') or body_json.get('data') or body_json
+                            else:
+                                report_data = body_str
+                            logger.info(f"[Agent2] conversationHistory에서 body 데이터 추출 성공")
+                            used_session = True
+                        else:
+                            report_data = agent1_json
+                            logger.info(f"[Agent2] conversationHistory에서 직접 JSON 사용")
+                            used_session = True
+                    else:
+                        # 텍스트 응답인 경우
+                        report_data = [{"message": agent1_response_text}]
+                        logger.info(f"[Agent2] conversationHistory에서 텍스트 응답 사용")
+                        used_session = True
+                        
+                except json.JSONDecodeError:
+                    # JSON 파싱 실패 시 텍스트로 처리
+                    report_data = [{"message": agent1_response_text}]
+                    logger.info(f"[Agent2] conversationHistory에서 텍스트 응답 사용 (JSON 파싱 실패)")
+                    used_session = True
+                    
+            except Exception as e:
+                logger.error(f"[Agent2] conversationHistory 파싱 실패: {e}")
+        
+        # 2. conversationHistory에서 추출 실패 시 sessionAttributes 사용
+        if not report_data and agent1_response_data and agent1_response_processed == "true":
             try:
                 logger.info(f"[Agent2] sessionAttributes에서 Agent1 응답 활용 시도")
                 agent1_result = json.loads(agent1_response_data)
@@ -287,69 +336,16 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     
             except Exception as e:
                 logger.error(f"[Agent2] Agent1 응답 파싱 실패: {e}")
-                
-        # === sessionAttributes 값이 없으면 기존처럼 Agent1 람다 호출 ===
+        
+        # === 데이터가 없으면 오류 처리 ===
         if not report_data:
-            logger.info(f"[Agent2] Agent1 람다 호출 시작")
-            client = boto3.client("lambda")
-            
-            try:
-                # Agent1 호출을 위한 payload 구성
-                agent1_payload = {
-                    "actionGroup": "fitcloud_action_part1",
-                    "action": "get_cost_data",
-                    "parameters": [
-                        {"name": "from", "value": "202505"},
-                        {"name": "to", "value": "202505"}
-                    ]
-                }
-                logger.info(f"[Agent2] Agent1 호출 payload: {json.dumps(agent1_payload, ensure_ascii=False)}")
-                
-                # 타임아웃 설정을 위한 호출
-                agent1_response = client.invoke(
-                    FunctionName=AGENT1_LAMBDA_NAME,
-                    InvocationType='RequestResponse',
-                    Payload=json.dumps(agent1_payload)
-                )
-                logger.info(f"[Agent2] Agent1 람다 호출 완료")
-                
-                # 응답 파싱
-                agent1_result = json.load(agent1_response['Payload'])
-                logger.info(f"[Agent2] Agent1 람다 응답 수신")
-                
-                # Agent1 응답 구조 분석 및 데이터 추출 (간소화)
-                if 'response' in agent1_result and 'responseBody' in agent1_result['response'].get('application/json', {}):
-                    body_str = agent1_result['response']['application/json']['body']
-                    logger.info(f"[Agent2] Agent1 body_str 길이: {len(body_str)}")
-                    try:
-                        body_json = json.loads(body_str)
-                        report_data = body_json.get('cost_items') or body_json.get('data') or body_json
-                        logger.info(f"[Agent2] Agent1 body_json에서 데이터 추출 성공")
-                    except Exception as e:
-                        logger.error(f"[Agent2] Agent1 body_str 파싱 실패: {e}")
-                        report_data = body_str
-                elif 'body' in agent1_result:
-                    body_str = agent1_result['body']
-                    logger.info(f"[Agent2] Agent1 body 길이: {len(str(body_str))}")
-                    try:
-                        if isinstance(body_str, str):
-                            body_json = json.loads(body_str)
-                            report_data = body_json.get('cost_items') or body_json.get('data') or body_json
-                        else:
-                            report_data = body_str
-                        logger.info(f"[Agent2] Agent1 body에서 데이터 추출 성공")
-                    except Exception as e:
-                        logger.error(f"[Agent2] Agent1 body 파싱 실패: {e}")
-                        report_data = body_str
-                else:
-                    report_data = agent1_result
-                    logger.info(f"[Agent2] Agent1 직접 데이터 사용")
-                    
-            except Exception as e:
-                logger.error(f"[Agent2] Agent1 람다 호출/파싱 실패: {e}")
-                import traceback
-                logger.error(f"[Agent2] Agent1 처리 실패 상세: {traceback.format_exc()}")
-                raise
+            error_msg = "슈퍼바이저로부터 Agent1 응답 데이터를 받지 못했습니다. conversationHistory 또는 sessionAttributes를 확인해주세요."
+            logger.error(f"[Agent2] {error_msg}")
+            logger.error(f"[Agent2] conversationHistory 길이: {len(conversation_history)}")
+            logger.error(f"[Agent2] sessionAttributes keys: {list(session_attrs.keys())}")
+            return {
+                'completion': f'❌ [Agent2] {error_msg}'
+            }
 
         # 데이터 검증
         if not report_data or not isinstance(report_data, list) or len(report_data) == 0:
