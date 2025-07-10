@@ -244,7 +244,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 params = {"user_input": params}
         logger.info(f"[Agent2] 입력 파라미터: {params}")
 
-        # === sessionAttributes에서 Agent1 응답 확인 ===
+        # === sessionAttributes에서 Agent1 응답 확인 (메모리 효율적으로) ===
         session_attrs = event.get("sessionAttributes", {})
         agent1_response_data = session_attrs.get("agent1_response_data")
         agent1_response_processed = session_attrs.get("agent1_response_processed")
@@ -253,36 +253,36 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         
         if agent1_response_data and agent1_response_processed == "true":
             try:
+                logger.info(f"[Agent2] sessionAttributes에서 Agent1 응답 활용 시도")
                 agent1_result = json.loads(agent1_response_data)
-                logger.info(f"[Agent2] sessionAttributes에서 Agent1 응답 활용")
                 
-                # Agent1 응답에서 데이터 추출
+                # Agent1 응답에서 데이터 추출 (간소화된 로직)
                 if 'response' in agent1_result and 'responseBody' in agent1_result['response'].get('application/json', {}):
                     body_str = agent1_result['response']['application/json']['body']
-                    logger.info(f"[Agent2] Agent1 body_str: {body_str}")
+                    logger.info(f"[Agent2] Agent1 body_str 길이: {len(body_str)}")
                     try:
                         body_json = json.loads(body_str)
                         report_data = body_json.get('cost_items') or body_json.get('data') or body_json
-                        logger.info(f"[Agent2] Agent1 응답에서 추출된 데이터: {report_data}")
+                        logger.info(f"[Agent2] Agent1 응답에서 데이터 추출 성공")
                         used_session = True
                     except Exception as e:
                         logger.error(f"[Agent2] Agent1 body_str 파싱 실패: {e}")
                 elif 'body' in agent1_result:
                     body_str = agent1_result['body']
-                    logger.info(f"[Agent2] Agent1 body: {body_str}")
+                    logger.info(f"[Agent2] Agent1 body 길이: {len(str(body_str))}")
                     try:
                         if isinstance(body_str, str):
                             body_json = json.loads(body_str)
                             report_data = body_json.get('cost_items') or body_json.get('data') or body_json
                         else:
                             report_data = body_str
-                        logger.info(f"[Agent2] Agent1 body에서 추출된 데이터: {report_data}")
+                        logger.info(f"[Agent2] Agent1 body에서 데이터 추출 성공")
                         used_session = True
                     except Exception as e:
                         logger.error(f"[Agent2] Agent1 body 파싱 실패: {e}")
                 else:
                     report_data = agent1_result
-                    logger.info(f"[Agent2] Agent1 직접 데이터: {report_data}")
+                    logger.info(f"[Agent2] Agent1 직접 데이터 사용")
                     used_session = True
                     
             except Exception as e:
@@ -290,8 +290,9 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 
         # === sessionAttributes 값이 없으면 기존처럼 Agent1 람다 호출 ===
         if not report_data:
+            logger.info(f"[Agent2] Agent1 람다 호출 시작")
             client = boto3.client("lambda")
-            logger.info(f"[Agent2] Agent1 람다 호출 시작 - 함수명: {AGENT1_LAMBDA_NAME}")
+            
             try:
                 # Agent1 호출을 위한 payload 구성
                 agent1_payload = {
@@ -303,82 +304,72 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     ]
                 }
                 logger.info(f"[Agent2] Agent1 호출 payload: {json.dumps(agent1_payload, ensure_ascii=False)}")
+                
+                # 타임아웃 설정을 위한 호출
                 agent1_response = client.invoke(
                     FunctionName=AGENT1_LAMBDA_NAME,
                     InvocationType='RequestResponse',
                     Payload=json.dumps(agent1_payload)
                 )
-                logger.info(f"[Agent2] Agent1 람다 호출 완료 - 응답: {agent1_response}")
-            except Exception as e:
-                logger.error(f"[Agent2] Agent1 람다 호출 실패: {e}")
-                import traceback
-                logger.error(f"[Agent2] Agent1 호출 실패 상세: {traceback.format_exc()}")
-                raise
-            try:
+                logger.info(f"[Agent2] Agent1 람다 호출 완료")
+                
+                # 응답 파싱
                 agent1_result = json.load(agent1_response['Payload'])
-                logger.info(f"[Agent2] Agent1 람다 응답: {agent1_result}")
+                logger.info(f"[Agent2] Agent1 람다 응답 수신")
                 
-                # Agent1 응답 구조 분석 및 데이터 추출
-                report_data = None
-                
-                # 1. Bedrock Agent 람다 응답 구조 확인
+                # Agent1 응답 구조 분석 및 데이터 추출 (간소화)
                 if 'response' in agent1_result and 'responseBody' in agent1_result['response'].get('application/json', {}):
                     body_str = agent1_result['response']['application/json']['body']
-                    logger.info(f"[Agent2] body_str: {body_str}")
+                    logger.info(f"[Agent2] Agent1 body_str 길이: {len(body_str)}")
                     try:
                         body_json = json.loads(body_str)
                         report_data = body_json.get('cost_items') or body_json.get('data') or body_json
-                        logger.info(f"[Agent2] body_json에서 추출된 데이터: {report_data}")
+                        logger.info(f"[Agent2] Agent1 body_json에서 데이터 추출 성공")
                     except Exception as e:
-                        logger.error(f"[Agent2] body_str 파싱 실패: {e}")
+                        logger.error(f"[Agent2] Agent1 body_str 파싱 실패: {e}")
                         report_data = body_str
-                # 2. 일반적인 람다 응답 구조 확인
                 elif 'body' in agent1_result:
                     body_str = agent1_result['body']
-                    logger.info(f"[Agent2] body: {body_str}")
+                    logger.info(f"[Agent2] Agent1 body 길이: {len(str(body_str))}")
                     try:
                         if isinstance(body_str, str):
                             body_json = json.loads(body_str)
                             report_data = body_json.get('cost_items') or body_json.get('data') or body_json
                         else:
                             report_data = body_str
-                        logger.info(f"[Agent2] body에서 추출된 데이터: {report_data}")
+                        logger.info(f"[Agent2] Agent1 body에서 데이터 추출 성공")
                     except Exception as e:
-                        logger.error(f"[Agent2] body 파싱 실패: {e}")
+                        logger.error(f"[Agent2] Agent1 body 파싱 실패: {e}")
                         report_data = body_str
-                # 3. 직접 데이터가 있는 경우
                 else:
                     report_data = agent1_result
-                    logger.info(f"[Agent2] 직접 사용할 데이터: {report_data}")
+                    logger.info(f"[Agent2] Agent1 직접 데이터 사용")
                     
             except Exception as e:
-                logger.error(f"[Agent2] Agent1 람다 응답 파싱 실패: {e}")
+                logger.error(f"[Agent2] Agent1 람다 호출/파싱 실패: {e}")
                 import traceback
-                logger.error(f"[Agent2] 파싱 실패 상세: {traceback.format_exc()}")
+                logger.error(f"[Agent2] Agent1 처리 실패 상세: {traceback.format_exc()}")
                 raise
 
-        # app.py 스타일의 데이터 검증 추가
+        # 데이터 검증
         if not report_data or not isinstance(report_data, list) or len(report_data) == 0:
+            logger.error(f"[Agent2] 유효하지 않은 데이터: {type(report_data)}, 길이: {len(report_data) if isinstance(report_data, list) else 'N/A'}")
             raise ValueError("유효하지 않은 데이터입니다. 리스트 형태의 데이터가 필요합니다.")
+
+        logger.info(f"[Agent2] 데이터 검증 완료, 레코드 수: {len(report_data)}")
 
         # 3. 엑셀 보고서 생성 및 슬랙 업로드
         logger.info(f"[Agent2] 엑셀 보고서 생성 시작")
         try:
             upload_result = generate_excel_report(report_data)
-            logger.info(f"[Agent2] 엑셀 보고서 생성 완료: {upload_result}")
+            logger.info(f"[Agent2] 엑셀 보고서 생성 완료")
         except Exception as e:
             logger.error(f"[Agent2] 엑셀 보고서 생성 실패: {e}")
+            import traceback
+            logger.error(f"[Agent2] 엑셀 생성 실패 상세: {traceback.format_exc()}")
             raise
 
         # 4. 결과 반환
-        debug_info = {
-            'used_session': used_session,
-            'session_last_cost_table': last_cost_table,
-            'session_last_cost_message': last_cost_message,
-            'upload_result': upload_result
-        }
-
-        # Bedrock Agent 응답 형식으로 반환
         completion_msg = (
             f"📊 **{upload_result.get('report_title', '리포트')} 생성 완료!**\n"
             f"✅ 엑셀 파일이 슬랙 채널에 업로드되었습니다.\n"
@@ -387,6 +378,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             f"📋 데이터 소스: {'세션 속성' if used_session else 'Agent1 호출'}"
         )
         
+        logger.info(f"[Agent2] 처리 완료")
         return {
             'completion': completion_msg
         }
