@@ -95,8 +95,8 @@ def lambda_handler(event, context):
             
             # Bedrock Agent Runtime 호출
             client = boto3.client("bedrock-agent-runtime")
-            session_attributes = None
-            conversation_history = []
+            session_attributes = {}
+            conversation_history = None
             
             # 1단계: Agent1 호출 (데이터 수집)
             logger.info(f"[Agent0] 1단계: Agent1({AGENT1_ID}) 호출 시작")
@@ -108,14 +108,12 @@ def lambda_handler(event, context):
             )
             agent1_result = ""
             agent1_response_data = None
-            
             try:
                 # EventStream 객체 처리
                 for event in agent1_response:
                     if 'chunk' in event and 'bytes' in event['chunk']:
                         chunk_data = event['chunk']['bytes'].decode('utf-8')
                         agent1_result += chunk_data
-                        
                         # JSON 응답 구조 파싱 시도
                         try:
                             if chunk_data.strip().startswith('{'):
@@ -124,14 +122,12 @@ def lambda_handler(event, context):
                                     agent1_response_data = parsed_chunk
                         except json.JSONDecodeError:
                             pass  # JSON이 아닌 경우 무시
-                            
             except Exception as e:
                 logger.error(f"Agent1 EventStream 파싱 실패: {e}")
                 agent1_result = f"Agent1 호출 실패: {str(e)}"
-            
             logger.info(f"[Agent0] Agent1 응답 완료, 길이: {len(agent1_result)}")
-            
-            # conversationHistory 구성
+
+            # Agent1 응답을 conversationHistory에 반드시 저장
             conversation_history = {
                 "messages": [
                     {
@@ -139,42 +135,68 @@ def lambda_handler(event, context):
                         "content": [user_input]
                     },
                     {
-                        "role": "assistant", 
+                        "role": "assistant",
                         "content": [agent1_result]
                     }
                 ]
             }
-            
-            # sessionAttributes 추출 및 개선
-            if hasattr(agent1_response, 'get'):
-                session_attributes = agent1_response.get("sessionAttributes", {})
-            else:
+            logger.info(f"[Agent0] conversationHistory 생성 및 저장 완료")
+
+            # sessionAttributes도 항상 dict로 초기화
+            if not session_attributes:
                 session_attributes = {}
-            
-            # Agent1 결과를 sessionAttributes에 저장 (Agent2가 활용할 수 있도록)
-            if agent1_result:
-                session_attributes["last_cost_message"] = str(agent1_result)
-                
-                # Agent1 응답 데이터 저장 (우선순위: 파싱된 JSON > 전체 텍스트)
-                if agent1_response_data:
-                    session_attributes["agent1_response_data"] = json.dumps(agent1_response_data, ensure_ascii=False)
-                    logger.info(f"[Agent0] Agent1 JSON 응답 저장 완료")
-                else:
-                    # JSON 파싱 실패 시 전체 응답을 저장
-                    session_attributes["agent1_response_data"] = json.dumps({"body": agent1_result}, ensure_ascii=False)
-                    logger.info(f"[Agent0] Agent1 텍스트 응답 저장 완료")
-                
+            # Agent1의 JSON 응답이 있으면 sessionAttributes에 저장(선택)
+            if agent1_response_data:
+                session_attributes["agent1_response_data"] = json.dumps(agent1_response_data, ensure_ascii=False)
                 session_attributes["agent1_response_processed"] = "true"
-                
-                # Agent1에서 표 데이터가 있다면 그것도 저장
-                if "표" in agent1_result or "데이터" in agent1_result:
-                    session_attributes["last_cost_table"] = str(agent1_result)
-            
+
             # 2단계: Agent2 호출 (보고서 생성)
             target_agent_id = AGENT2_ID
             target_agent_alias = AGENT2_ALIAS
             logger.info(f"[Agent0] 2단계: Agent2({target_agent_id}) 호출 시작")
-            
+
+            agent_kwargs = dict(
+                agentId=target_agent_id,
+                agentAliasId=target_agent_alias,
+                sessionId=session_id,
+                inputText="해당 답변으로 보고서 만들어줘",  # 실제 사용자 입력을 넣어도 됨
+                sessionState={
+                    "conversationHistory": conversation_history,
+                    "sessionAttributes": session_attributes
+                }
+            )
+            logger.info(f"[Agent0] Agent2 호출용 sessionState: {json.dumps(agent_kwargs['sessionState'], ensure_ascii=False)[:500]}")
+
+            try:
+                response = client.invoke_agent(**agent_kwargs)
+                # EventStream 객체 직접 파싱
+                result = ""
+                try:
+                    for event in response:
+                        if 'chunk' in event and 'bytes' in event['chunk']:
+                            result += event['chunk']['bytes'].decode('utf-8')
+                except Exception as e:
+                    logger.error(f"EventStream 파싱 실패: {e}")
+                    result = f"[Agent0] EventStream 파싱 실패: {str(e)}"
+                if not result:
+                    result = "[Agent0] Bedrock Agent 응답 파싱 실패 또는 빈 응답"
+            except Exception as e:
+                logger.error(f"Agent2 호출 실패: {e}")
+                result = f"[Agent0] Agent2 호출 실패: {str(e)}"
+            logger.info(f"[Agent0] Agent2 응답 완료, 결과 길이: {len(result) if result else 0}")
+            return {
+                'response': {
+                    'body': {
+                        'content': [
+                            {
+                                'type': 'text',
+                                'text': result
+                            }
+                        ]
+                    }
+                }
+            }
+
         else:
             # 단순 요금 조회: Agent1만 호출
             target_agent_id = AGENT1_ID

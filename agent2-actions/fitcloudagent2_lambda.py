@@ -266,195 +266,38 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 params = {"user_input": params}
         logger.info(f"[Agent2] 입력 파라미터: {params}")
 
-        # === inputText, conversationHistory, sessionAttributes에서 Agent1 응답 확인 ===
-        session_attrs = event.get("sessionAttributes", {})
-        conversation_history = event.get("conversationHistory", {})
-        input_text = event.get("inputText", "")
-        agent1_response_data = session_attrs.get("agent1_response_data")
-        agent1_response_processed = session_attrs.get("agent1_response_processed")
-        used_session = False
-        report_data = None
-        
-        # 1. inputText에서 Agent1 응답 추출 시도 (최우선)
-        if input_text and "조회된 데이터:" in input_text:
-            try:
-                logger.info(f"[Agent2] inputText에서 Agent1 응답 추출 시도")
-                logger.info(f"[Agent2] inputText 길이: {len(input_text)}")
-                
-                # inputText에서 비용 정보 추출
-                cost_items = []
-                
-                # "총 온디맨드 사용 금액" 추출
-                import re
-                total_amount_match = re.search(r'총 온디맨드 사용금액:\s*\$([0-9,]+\.?[0-9]*)', input_text)
-                if total_amount_match:
-                    total_amount = float(total_amount_match.group(1).replace(',', ''))
-                    cost_items.append({
-                        "service": "Total",
-                        "amount": total_amount,
-                        "description": "총 온디맨드 사용 금액"
-                    })
-                
-                # 서비스별 비용 추출 (숫자. 서비스명: $금액 형식)
-                service_matches = re.findall(r'(\d+)\.\s*([^:]+):\s*\$([0-9,]+)', input_text)
-                for match in service_matches:
-                    service_name = match[1].strip()
-                    amount = float(match[2].replace(',', ''))
-                    cost_items.append({
-                        "service": service_name,
-                        "amount": amount,
-                        "description": f"{service_name} 비용"
-                    })
-                
-                # 기타 서비스 추출
-                other_match = re.search(r'기타 서비스:\s*\$([0-9,]+)', input_text)
-                if other_match:
-                    other_amount = float(other_match.group(1).replace(',', ''))
-                    cost_items.append({
-                        "service": "기타 서비스",
-                        "amount": other_amount,
-                        "description": "기타 서비스 비용"
-                    })
-                
-                if cost_items:
-                    report_data = cost_items
-                    logger.info(f"[Agent2] inputText에서 {len(cost_items)}개 비용 항목 추출 성공")
-                    used_session = True
-                else:
-                    # 파싱 실패 시 기본 구조로 변환
-                    report_data = [{"message": input_text, "type": "text_summary"}]
-                    logger.info(f"[Agent2] inputText 파싱 실패, 기본 구조로 변환")
-                    used_session = True
-                    
-            except Exception as e:
-                logger.error(f"[Agent2] inputText 파싱 실패: {e}")
-                report_data = [{"message": input_text, "type": "text_summary"}]
-                used_session = True
-        
-        # 2. conversationHistory에서 Agent1 응답 추출 시도 (백업)
-        elif conversation_history and "messages" in conversation_history and len(conversation_history["messages"]) >= 2:
-            try:
-                logger.info(f"[Agent2] conversationHistory에서 Agent1 응답 추출 시도")
-                # conversationHistory 구조: {"messages": [{"role": "user", "content": ["..."]}, {"role": "assistant", "content": ["..."]}]}
-                agent1_response_text = conversation_history["messages"][1].get("content", [""])[0]
-                logger.info(f"[Agent2] conversationHistory에서 Agent1 응답 길이: {len(agent1_response_text)}")
-                
-                # Agent1 응답에서 JSON 구조 파싱 시도
-                try:
-                    # JSON 응답인지 확인
-                    if agent1_response_text.strip().startswith('{'):
-                        agent1_json = json.loads(agent1_response_text)
-                        if 'response' in agent1_json and 'responseBody' in agent1_json['response'].get('application/json', {}):
-                            body_str = agent1_json['response']['application/json']['body']
-                            body_json = json.loads(body_str)
-                            report_data = body_json.get('cost_items') or body_json.get('data') or body_json
-                            logger.info(f"[Agent2] conversationHistory에서 JSON 데이터 추출 성공")
-                            used_session = True
-                        elif 'body' in agent1_json:
-                            body_str = agent1_json['body']
-                            if isinstance(body_str, str):
-                                body_json = json.loads(body_str)
-                                report_data = body_json.get('cost_items') or body_json.get('data') or body_json
-                            else:
-                                report_data = body_str
-                            logger.info(f"[Agent2] conversationHistory에서 body 데이터 추출 성공")
-                            used_session = True
-                        else:
-                            report_data = agent1_json
-                            logger.info(f"[Agent2] conversationHistory에서 직접 JSON 사용")
-                            used_session = True
-                    else:
-                        # 텍스트 응답인 경우 - 텍스트를 파싱하여 구조화된 데이터로 변환
-                        logger.info(f"[Agent2] conversationHistory에서 텍스트 응답 파싱 시도")
-                        try:
-                            # 텍스트에서 비용 정보 추출
-                            cost_items = []
-                            
-                            # "총 온디맨드 사용 금액" 추출
-                            import re
-                            total_amount_match = re.search(r'총 온디맨드 사용 금액:\s*\$([0-9,]+\.?[0-9]*)', agent1_response_text)
-                            if total_amount_match:
-                                total_amount = float(total_amount_match.group(1).replace(',', ''))
-                                cost_items.append({
-                                    "service": "Total",
-                                    "amount": total_amount,
-                                    "description": "총 온디맨드 사용 금액"
-                                })
-                            
-                            # 서비스별 비용 추출
-                            service_matches = re.findall(r'(\d+)\.\s*([^:]+):\s*\$([0-9,]+)', agent1_response_text)
-                            for match in service_matches:
-                                service_name = match[1].strip()
-                                amount = float(match[2].replace(',', ''))
-                                cost_items.append({
-                                    "service": service_name,
-                                    "amount": amount,
-                                    "description": f"{service_name} 비용"
-                                })
-                            
-                            if cost_items:
-                                report_data = cost_items
-                                logger.info(f"[Agent2] 텍스트에서 {len(cost_items)}개 비용 항목 추출 성공")
-                            else:
-                                # 파싱 실패 시 기본 구조로 변환
-                                report_data = [{"message": agent1_response_text, "type": "text_summary"}]
-                                logger.info(f"[Agent2] 텍스트 파싱 실패, 기본 구조로 변환")
-                            
-                            used_session = True
-                        except Exception as e:
-                            logger.error(f"[Agent2] 텍스트 파싱 실패: {e}")
-                            report_data = [{"message": agent1_response_text, "type": "text_summary"}]
-                            used_session = True
-                        
-                except json.JSONDecodeError:
-                    # JSON 파싱 실패 시 텍스트로 처리
-                    report_data = [{"message": agent1_response_text}]
-                    logger.info(f"[Agent2] conversationHistory에서 텍스트 응답 사용 (JSON 파싱 실패)")
-                    used_session = True
-                    
-            except Exception as e:
-                logger.error(f"[Agent2] conversationHistory 파싱 실패: {e}")
-        
-        # 2. conversationHistory에서 추출 실패 시 sessionAttributes 사용
-        if not report_data and agent1_response_data and agent1_response_processed == "true":
-            try:
-                logger.info(f"[Agent2] sessionAttributes에서 Agent1 응답 활용 시도")
-                agent1_result = json.loads(agent1_response_data)
-                
-                # Agent1 응답에서 데이터 추출 (간소화된 로직)
-                if 'response' in agent1_result and 'responseBody' in agent1_result['response'].get('application/json', {}):
-                    body_str = agent1_result['response']['application/json']['body']
-                    logger.info(f"[Agent2] Agent1 body_str 길이: {len(body_str)}")
-                    try:
-                        body_json = json.loads(body_str)
-                        report_data = body_json.get('cost_items') or body_json.get('data') or body_json
-                        logger.info(f"[Agent2] Agent1 응답에서 데이터 추출 성공")
-                        used_session = True
-                    except Exception as e:
-                        logger.error(f"[Agent2] Agent1 body_str 파싱 실패: {e}")
-                elif 'body' in agent1_result:
-                    body_str = agent1_result['body']
-                    logger.info(f"[Agent2] Agent1 body 길이: {len(str(body_str))}")
-                    try:
-                        if isinstance(body_str, str):
-                            body_json = json.loads(body_str)
-                            report_data = body_json.get('cost_items') or body_json.get('data') or body_json
-                        else:
-                            report_data = body_str
-                        logger.info(f"[Agent2] Agent1 body에서 데이터 추출 성공")
-                        used_session = True
-                    except Exception as e:
-                        logger.error(f"[Agent2] Agent1 body 파싱 실패: {e}")
-                else:
-                    report_data = agent1_result
-                    logger.info(f"[Agent2] Agent1 직접 데이터 사용")
-                    used_session = True
-                    
-            except Exception as e:
-                logger.error(f"[Agent2] Agent1 응답 파싱 실패: {e}")
-        
+        # Agent1 결과 추출 로직 보강
+        agent1_result = None
+        # 1. sessionAttributes에서 우선 추출
+        if 'sessionAttributes' in event and isinstance(event['sessionAttributes'], dict):
+            sa = event['sessionAttributes']
+            if 'agent1_result' in sa:
+                agent1_result = sa['agent1_result']
+            elif 'agent1_result_json' in sa:
+                agent1_result = sa['agent1_result_json']
+        # 2. conversationHistory에서 보조 추출
+        if not agent1_result and 'conversationHistory' in event:
+            ch = event['conversationHistory']
+            if isinstance(ch, dict) and 'messages' in ch:
+                for msg in ch['messages']:
+                    if msg.get('role') == 'assistant' and msg.get('content'):
+                        agent1_result = msg['content'][0]
+        if not agent1_result:
+            logger.error('[Agent2] Agent1의 데이터가 없습니다. 먼저 비용/사용량을 조회해주세요.')
+            return {
+                'body': {
+                    'content': [
+                        {
+                            'type': 'text',
+                            'text': '[Agent2] Agent1의 데이터가 없습니다. 먼저 비용/사용량을 조회해주세요.'
+                        }
+                    ]
+                }
+            }
+        # 이후 agent1_result를 활용해 보고서 생성 로직 진행
+
         # === 데이터가 없으면 오류 처리 ===
-        if not report_data:
+        if not agent1_result:
             error_msg = "Agent1의 데이터가 없습니다. 먼저 비용/사용량을 조회해주세요."
             logger.error(f"[Agent2] {error_msg}")
             logger.error(f"[Agent2] conversationHistory keys: {list(conversation_history.keys())}")
@@ -473,16 +316,16 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             }
 
         # 데이터 검증
-        if not report_data or not isinstance(report_data, list) or len(report_data) == 0:
-            logger.error(f"[Agent2] 유효하지 않은 데이터: {type(report_data)}, 길이: {len(report_data) if isinstance(report_data, list) else 'N/A'}")
+        if not agent1_result or not isinstance(agent1_result, list) or len(agent1_result) == 0:
+            logger.error(f"[Agent2] 유효하지 않은 데이터: {type(agent1_result)}, 길이: {len(agent1_result) if isinstance(agent1_result, list) else 'N/A'}")
             raise ValueError("유효하지 않은 데이터입니다. 리스트 형태의 데이터가 필요합니다.")
 
-        logger.info(f"[Agent2] 데이터 검증 완료, 레코드 수: {len(report_data)}")
+        logger.info(f"[Agent2] 데이터 검증 완료, 레코드 수: {len(agent1_result)}")
 
         # 3. 엑셀 보고서 생성 및 슬랙 업로드
         logger.info(f"[Agent2] 엑셀 보고서 생성 시작")
         try:
-            upload_result = generate_excel_report(report_data)
+            upload_result = generate_excel_report(agent1_result)
             logger.info(f"[Agent2] 엑셀 보고서 생성 완료")
         except Exception as e:
             logger.error(f"[Agent2] 엑셀 보고서 생성 실패: {e}")
@@ -496,7 +339,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             f"✅ 엑셀 파일이 슬랙 채널에 업로드되었습니다.\n"
             f"🔗 파일 링크: {upload_result.get('permalink', '링크 없음')}\n"
             f"📁 파일 ID: {upload_result.get('file_id', 'N/A')}\n"
-            f"📋 데이터 소스: {'세션 속성' if used_session else 'Agent1 호출'}"
+            f"📋 데이터 소스: {'세션 속성' if 'sessionAttributes' in event and isinstance(event['sessionAttributes'], dict) and 'agent1_result' in event['sessionAttributes'] else 'Agent1 호출'}"
         )
         
         logger.info(f"[Agent2] 처리 완료")
