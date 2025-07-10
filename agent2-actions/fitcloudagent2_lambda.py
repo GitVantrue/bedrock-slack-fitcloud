@@ -262,16 +262,19 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # === sessionAttributes 값이 없으면 기존처럼 Agent1 람다 호출 ===
         if not report_data:
             client = boto3.client("lambda")
-            logger.info("[Agent2] Agent1 람다 호출 시작")
+            logger.info(f"[Agent2] Agent1 람다 호출 시작 - 함수명: {AGENT1_LAMBDA_NAME}")
             try:
+                logger.info(f"[Agent2] Agent1 호출 payload: {json.dumps(event, ensure_ascii=False)}")
                 agent1_response = client.invoke(
                     FunctionName=AGENT1_LAMBDA_NAME,
                     InvocationType='RequestResponse',
                     Payload=json.dumps(event)
                 )
-                logger.info("[Agent2] Agent1 람다 호출 완료")
+                logger.info(f"[Agent2] Agent1 람다 호출 완료 - 응답: {agent1_response}")
             except Exception as e:
                 logger.error(f"[Agent2] Agent1 람다 호출 실패: {e}")
+                import traceback
+                logger.error(f"[Agent2] Agent1 호출 실패 상세: {traceback.format_exc()}")
                 raise
             try:
                 agent1_result = json.load(agent1_response['Payload'])
