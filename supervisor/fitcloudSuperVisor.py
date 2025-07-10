@@ -59,8 +59,10 @@ def lambda_handler(event, context):
         }
 
     try:
-        # 세션 ID 생성
-        session_id = f"supervisor-{user_input[:20]}"  # 고유한 세션 ID 생성
+        # 세션 ID 생성 (영문/숫자만 사용)
+        import re
+        clean_input = re.sub(r'[^a-zA-Z0-9._:-]', '', user_input[:20])
+        session_id = f"supervisor-{clean_input}" if clean_input else "supervisor-default"
         
         # 분기: 보고서 생성 요청인지 확인
         is_report_request = any(keyword in user_input for keyword in AGENT2_KEYWORDS)
