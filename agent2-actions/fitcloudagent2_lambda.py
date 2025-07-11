@@ -38,13 +38,16 @@ def parse_agent1_response_with_llm(input_text: str) -> list:
     try:
         logger.info(f"[Agent2] LLM 파싱 시작 - 입력 길이: {len(input_text)}")
         
-        # 이스케이프 문자 처리
+        # 이스케이프 문자 처리 개선
         try:
-            decoded_text = codecs.decode(input_text, 'unicode_escape')
+            # 먼저 일반적인 이스케이프 문자 처리
+            decoded_text = input_text.encode('utf-8').decode('unicode_escape')
             logger.info(f"[Agent2] 이스케이프 문자 처리 후 (처음 300자): {decoded_text[:300]}")
             input_text = decoded_text
         except Exception as e:
             logger.warning(f"[Agent2] 이스케이프 문자 처리 실패: {e}")
+            # 실패 시 원본 텍스트 사용
+            logger.info(f"[Agent2] 원본 텍스트 사용 (처음 300자): {input_text[:300]}")
         
         # LLM에게 파싱 요청
         prompt = f"""
@@ -80,8 +83,17 @@ def parse_agent1_response_with_llm(input_text: str) -> list:
 
         logger.info(f"[Agent2] Bedrock LLM 호출 시작")
         
-        # Bedrock LLM 호출
-        response = bedrock_client.invoke_model(
+        # Bedrock LLM 호출 (타임아웃 설정 추가)
+        import botocore
+        
+        config = botocore.config.Config(
+            read_timeout=300,  # 5분
+            connect_timeout=60  # 1분
+        )
+        
+        bedrock_client_with_timeout = boto3.client('bedrock-runtime', config=config)
+        
+        response = bedrock_client_with_timeout.invoke_model(
             modelId='anthropic.claude-3-sonnet-20240229-v1:0',
             body=json.dumps({
                 "anthropic_version": "bedrock-2023-05-31",
@@ -132,6 +144,37 @@ def parse_agent1_response_with_llm(input_text: str) -> list:
         logger.error(f"[Agent2] LLM 파싱 중 오류: {e}")
         import traceback
         logger.error(f"[Agent2] LLM 파싱 오류 상세: {traceback.format_exc()}")
+        
+        # LLM 실패 시 기본 데이터 구조로 변환 시도
+        try:
+            logger.info(f"[Agent2] LLM 실패, 기본 파싱 시도")
+            # Agent1 응답에서 숫자와 서비스명 추출
+            import re
+            
+            # 총 금액 추출
+            total_match = re.search(r'총 온디맨드 사용금액: \$([0-9,]+\.?\d*)', input_text)
+            total_amount = float(total_match.group(1).replace(',', '')) if total_match else 0
+            
+            # 서비스별 데이터 추출
+            services = []
+            service_pattern = r'(\d+)\. \*?([^*]+)\*?: 약 \$([0-9,]+) \(([0-9.]+)%\)'
+            matches = re.findall(service_pattern, input_text)
+            
+            for rank, service_name, amount, percentage in matches:
+                services.append({
+                    "serviceName": service_name.strip(),
+                    "usageFeeUSD": float(amount.replace(',', '')),
+                    "percentage": float(percentage),
+                    "billingPeriod": "202504"  # 기본값
+                })
+            
+            if services:
+                logger.info(f"[Agent2] 기본 파싱 성공: {len(services)}개 서비스")
+                return services
+            
+        except Exception as fallback_e:
+            logger.error(f"[Agent2] 기본 파싱도 실패: {fallback_e}")
+        
         return []
 
 def generate_excel_report(data):
