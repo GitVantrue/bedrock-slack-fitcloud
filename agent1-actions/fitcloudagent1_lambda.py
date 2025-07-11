@@ -1177,7 +1177,31 @@ def lambda_handler(event, context):
             print(f"[RESPONSE] body: {str(response.text)[:500]}")
             raw_data = response.json()
             processed_data_wrapper = process_fitcloud_response(raw_data, '/accounts')
-            return create_bedrock_response(event, 200, processed_data_wrapper)
+            bedrock_response = create_bedrock_response(event, 200, processed_data_wrapper)
+            # === Bedrock 표준 구조로 content 필드 추가 ===
+            # message 추출
+            message = None
+            if isinstance(bedrock_response, dict):
+                # responseBody.application/json.body에서 message 추출
+                try:
+                    body_json = bedrock_response.get("response", {}).get("responseBody", {}).get("application/json", {}).get("body")
+                    if body_json:
+                        body_data = json.loads(body_json)
+                        message = body_data.get("message")
+                except Exception:
+                    pass
+            if not message:
+                message = "조회 결과가 없습니다."
+            # Bedrock 표준 content 필드 추가
+            bedrock_response["response"]["body"] = {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": message
+                    }
+                ]
+            }
+            return bedrock_response
 
         elif target_api_path.startswith('/costs/ondemand/'):
             # 두 API는 반드시 from, to (account는 accountId도)로만 요청
@@ -1205,7 +1229,31 @@ def lambda_handler(event, context):
             print(f"[RESPONSE] body: {str(response.text)[:500]}")
             raw_data = response.json()
             processed_data_wrapper = process_fitcloud_response(raw_data, target_api_path)
-            return create_bedrock_response(event, 200, processed_data_wrapper)
+            bedrock_response = create_bedrock_response(event, 200, processed_data_wrapper)
+            # === Bedrock 표준 구조로 content 필드 추가 ===
+            # message 추출
+            message = None
+            if isinstance(bedrock_response, dict):
+                # responseBody.application/json.body에서 message 추출
+                try:
+                    body_json = bedrock_response.get("response", {}).get("responseBody", {}).get("application/json", {}).get("body")
+                    if body_json:
+                        body_data = json.loads(body_json)
+                        message = body_data.get("message")
+                except Exception:
+                    pass
+            if not message:
+                message = "조회 결과가 없습니다."
+            # Bedrock 표준 content 필드 추가
+            bedrock_response["response"]["body"] = {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": message
+                    }
+                ]
+            }
+            return bedrock_response
 
         elif target_api_path.startswith('/invoice/'):
             api_data = {'billingPeriod': params['billingPeriod']}
@@ -1222,7 +1270,31 @@ def lambda_handler(event, context):
             # 실제 API 요청에 사용한 billingPeriod를 우선적으로 전달
             billing_period_used = api_data['billingPeriod']
             processed_data_wrapper = process_invoice_response(raw_data, billing_period_used, params.get('accountId'))
-            return create_bedrock_response(event, 200, processed_data_wrapper)
+            bedrock_response = create_bedrock_response(event, 200, processed_data_wrapper)
+            # === Bedrock 표준 구조로 content 필드 추가 ===
+            # message 추출
+            message = None
+            if isinstance(bedrock_response, dict):
+                # responseBody.application/json.body에서 message 추출
+                try:
+                    body_json = bedrock_response.get("response", {}).get("responseBody", {}).get("application/json", {}).get("body")
+                    if body_json:
+                        body_data = json.loads(body_json)
+                        message = body_data.get("message")
+                except Exception:
+                    pass
+            if not message:
+                message = "조회 결과가 없습니다."
+            # Bedrock 표준 content 필드 추가
+            bedrock_response["response"]["body"] = {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": message
+                    }
+                ]
+            }
+            return bedrock_response
 
         elif target_api_path == '/usage/ondemand/tags':
             api_data = {}
@@ -1237,7 +1309,31 @@ def lambda_handler(event, context):
             print(f"[RESPONSE] body: {str(response.text)[:500]}")
             raw_data = response.json()
             processed_data_wrapper = process_usage_response(raw_data, params.get('beginDate'), params.get('endDate'), is_tag=True)
-            return create_bedrock_response(event, 200, processed_data_wrapper)
+            bedrock_response = create_bedrock_response(event, 200, processed_data_wrapper)
+            # === Bedrock 표준 구조로 content 필드 추가 ===
+            # message 추출
+            message = None
+            if isinstance(bedrock_response, dict):
+                # responseBody.application/json.body에서 message 추출
+                try:
+                    body_json = bedrock_response.get("response", {}).get("responseBody", {}).get("application/json", {}).get("body")
+                    if body_json:
+                        body_data = json.loads(body_json)
+                        message = body_data.get("message")
+                except Exception:
+                    pass
+            if not message:
+                message = "조회 결과가 없습니다."
+            # Bedrock 표준 content 필드 추가
+            bedrock_response["response"]["body"] = {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": message
+                    }
+                ]
+            }
+            return bedrock_response
 
         elif target_api_path.startswith('/usage/ondemand/'):
             if api_type == 'usage_daily':
@@ -1262,7 +1358,31 @@ def lambda_handler(event, context):
                 print(f"[RESPONSE] body: {str(response.text)[:500]}")
                 raw_data = response.json()
                 processed_data_wrapper = process_usage_response(raw_data, params['from'], params['to'])
-            return create_bedrock_response(event, 200, processed_data_wrapper)
+            bedrock_response = create_bedrock_response(event, 200, processed_data_wrapper)
+            # === Bedrock 표준 구조로 content 필드 추가 ===
+            # message 추출
+            message = None
+            if isinstance(bedrock_response, dict):
+                # responseBody.application/json.body에서 message 추출
+                try:
+                    body_json = bedrock_response.get("response", {}).get("responseBody", {}).get("application/json", {}).get("body")
+                    if body_json:
+                        body_data = json.loads(body_json)
+                        message = body_data.get("message")
+                except Exception:
+                    pass
+            if not message:
+                message = "조회 결과가 없습니다."
+            # Bedrock 표준 content 필드 추가
+            bedrock_response["response"]["body"] = {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": message
+                    }
+                ]
+            }
+            return bedrock_response
 
         else:
             print(f"[ERROR] 지원하지 않는 API 경로: {target_api_path}")
