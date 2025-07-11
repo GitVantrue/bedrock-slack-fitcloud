@@ -10,6 +10,7 @@ from openpyxl.chart import BarChart, Reference
 import io
 from collections import defaultdict
 import re
+import codecs
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -21,11 +22,102 @@ AGENT1_LAMBDA_NAME = os.environ.get("AGENT1_LAMBDA_NAME", "fitcloud_action_part1
 SLACK_BOT_TOKEN = os.environ.get('SLACK_BOT_TOKEN')
 SLACK_CHANNEL = os.environ.get('SLACK_CHANNEL')
 
+# Bedrock 클라이언트 초기화
+bedrock_client = boto3.client('bedrock-runtime')
+
 # 환경변수 검증
 if not SLACK_BOT_TOKEN:
     raise ValueError("SLACK_BOT_TOKEN 환경변수가 설정되지 않았습니다.")
 if not SLACK_CHANNEL:
     raise ValueError("SLACK_CHANNEL 환경변수가 설정되지 않았습니다.")
+
+def parse_agent1_response_with_llm(input_text: str) -> list:
+    """
+    LLM을 사용해서 Agent1의 응답을 구조화된 데이터로 변환합니다.
+    """
+    try:
+        # 이스케이프 문자 처리
+        try:
+            decoded_text = codecs.decode(input_text, 'unicode_escape')
+            logger.info(f"[Agent2] 이스케이프 문자 처리 후 (처음 300자): {decoded_text[:300]}")
+            input_text = decoded_text
+        except Exception as e:
+            logger.warning(f"[Agent2] 이스케이프 문자 처리 실패: {e}")
+        
+        # LLM에게 파싱 요청
+        prompt = f"""
+다음은 AWS 비용/사용량 조회 결과입니다. 이 텍스트를 분석해서 엑셀 파일에 적합한 구조화된 데이터로 변환해주세요.
+
+요구사항:
+1. 서비스명, 비용, 비율 등의 정보를 추출
+2. JSON 배열 형태로 반환
+3. 각 항목은 serviceName, usageFeeUSD, percentage, billingPeriod 필드를 포함
+4. 월 정보가 있으면 billingPeriod에 YYYYMM 형식으로 포함
+5. 기타 서비스도 별도 항목으로 포함
+
+입력 텍스트:
+{input_text}
+
+응답은 반드시 JSON 배열 형태로만 반환하세요. 다른 설명이나 텍스트는 포함하지 마세요.
+예시 형식:
+[
+  {{
+    "serviceName": "Relational Database Service",
+    "usageFeeUSD": 6568.0,
+    "percentage": 49.5,
+    "billingPeriod": "202506"
+  }},
+  {{
+    "serviceName": "기타 서비스",
+    "usageFeeUSD": 921.0,
+    "percentage": 6.9,
+    "billingPeriod": "202506"
+  }}
+]
+"""
+
+        # Bedrock LLM 호출
+        response = bedrock_client.invoke_model(
+            modelId='anthropic.claude-3-sonnet-20240229-v1:0',
+            body=json.dumps({
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 2000,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ]
+            })
+        )
+        
+        response_body = json.loads(response['body'].read())
+        llm_response = response_body['content'][0]['text']
+        logger.info(f"[Agent2] LLM 응답 (처음 300자): {llm_response[:300]}")
+        
+        # JSON 파싱
+        try:
+            # JSON 코드블록이 있으면 추출
+            json_match = re.search(r'```json\s*(\[.*?\])\s*```', llm_response, re.DOTALL)
+            if json_match:
+                parsed_data = json.loads(json_match.group(1))
+            else:
+                # 직접 JSON 파싱 시도
+                parsed_data = json.loads(llm_response)
+            
+            logger.info(f"[Agent2] LLM 파싱 성공: {len(parsed_data)}개 항목")
+            return parsed_data
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"[Agent2] LLM 응답 JSON 파싱 실패: {e}")
+            logger.error(f"[Agent2] LLM 응답 전체: {llm_response}")
+            return []
+            
+    except Exception as e:
+        logger.error(f"[Agent2] LLM 파싱 중 오류: {e}")
+        import traceback
+        logger.error(f"[Agent2] LLM 파싱 오류 상세: {traceback.format_exc()}")
+        return []
 
 def generate_excel_report(data):
     """
@@ -53,12 +145,13 @@ def generate_excel_report(data):
     chart_title = ''
 
     # inputText에서 추출한 가상 데이터 구조 처리 (새로 추가)
-    if 'percentage' in first and 'rank' in first:
+    if 'percentage' in first and 'billingPeriod' in first:
         ws_title = "서비스별 요금 리포트"
         headers = ['순위', '서비스명', '요금(USD)', '비율(%)']
-        for item in records:
+        rows = []
+        for i, item in enumerate(records, 1):
             rows.append([
-                item.get('rank', ''),
+                i,
                 item.get('serviceName', ''),
                 item.get('usageFeeUSD', 0),
                 item.get('percentage', 0)
@@ -124,8 +217,8 @@ def generate_excel_report(data):
 
     # 차트 추가 (가능한 경우만) - app.py와 동일한 로직
     if not chart and len(rows) > 0 and len(headers) >= 2:
-        # inputText에서 추출한 데이터의 경우 3번째 컬럼(요금)을 차트 데이터로 사용
-        if 'percentage' in first and 'rank' in first:
+        # LLM에서 추출한 데이터의 경우 3번째 컬럼(요금)을 차트 데이터로 사용
+        if 'percentage' in first and 'billingPeriod' in first:
             chart = BarChart()
             chart.title = chart_title
             chart.x_axis.title = chart_x_title
@@ -340,68 +433,19 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         if not agent1_result and 'inputText' in event:
             input_text = event['inputText']
             logger.info(f"[Agent2] inputText에서 Agent1 데이터 추출 시도 (길이: {len(input_text)})")
+            logger.info(f"[Agent2] inputText 내용 (처음 500자): {input_text[:500]}")
             
-            # inputText에서 비용 데이터 패턴 찾기
-            cost_patterns = [
-                r'총 온디맨드 사용금액:\s*\$([0-9,]+\.?[0-9]*)',
-                r'총 사용량:\s*\$([0-9,]+\.?[0-9]*)',
-                r'총 요금:\s*\$([0-9,]+\.?[0-9]*)'
-            ]
+            # LLM을 사용해서 Agent1 응답 파싱
+            logger.info(f"[Agent2] LLM을 사용한 Agent1 응답 파싱 시작")
+            agent1_result = parse_agent1_response_with_llm(input_text)
             
-            total_cost = None
-            for pattern in cost_patterns:
-                match = re.search(pattern, input_text)
-                if match:
-                    total_cost = match.group(1).replace(',', '')
-                    logger.info(f"[Agent2] inputText에서 총 비용 추출: ${total_cost}")
-                    break
-            
-            if total_cost:
-                # inputText에서 서비스별 비용 정보 추출
-                service_costs = []
-                service_pattern = r'(\d+)\.\s*([^:]+):\s*약\s*\$([0-9,]+)\s*\(([0-9.]+)%\)'
-                matches = re.findall(service_pattern, input_text)
-                
-                for rank, service_name, cost, percentage in matches:
-                    service_costs.append({
-                        'serviceName': service_name.strip(),
-                        'usageFeeUSD': float(cost.replace(',', '')),
-                        'percentage': float(percentage),
-                        'rank': int(rank)
-                    })
-                
-                # 기타 서비스 비용 추출
-                etc_pattern = r'기타 서비스:\s*약\s*\$([0-9,]+)\s*\(([0-9.]+)%\)'
-                etc_match = re.search(etc_pattern, input_text)
-                if etc_match:
-                    service_costs.append({
-                        'serviceName': '기타 서비스',
-                        'usageFeeUSD': float(etc_match.group(1).replace(',', '')),
-                        'percentage': float(etc_match.group(2)),
-                        'rank': len(service_costs) + 1
-                    })
-                
-                # 월 정보 추출
-                month_pattern = r'(\d{4})년\s*(\d{1,2})월'
-                month_match = re.search(month_pattern, input_text)
-                billing_period = None
-                if month_match:
-                    year = month_match.group(1)
-                    month = month_match.group(2).zfill(2)
-                    billing_period = f"{year}{month}"
-                
-                # 가상의 비용 데이터 구조 생성
-                agent1_result = []
-                for service in service_costs:
-                    agent1_result.append({
-                        'serviceName': service['serviceName'],
-                        'usageFeeUSD': service['usageFeeUSD'],
-                        'billingPeriod': billing_period or '202506',  # 기본값
-                        'date': billing_period or '202506',  # 기본값
-                        'percentage': service['percentage']
-                    })
-                
-                logger.info(f"[Agent2] inputText에서 비용 데이터 추출 성공 (서비스 수: {len(service_costs)})")
+            if agent1_result:
+                logger.info(f"[Agent2] LLM 파싱 성공: {len(agent1_result)}개 항목")
+                for i, item in enumerate(agent1_result[:3]):  # 처음 3개만 로그
+                    logger.info(f"[Agent2] 항목 {i+1}: {item.get('serviceName', 'N/A')} - ${item.get('usageFeeUSD', 0)} ({item.get('percentage', 0)}%)")
+            else:
+                logger.warning(f"[Agent2] LLM 파싱 실패 - 빈 결과")
+                logger.info(f"[Agent2] inputText 전체 내용: {input_text}")
         
         # 3. conversationHistory에서 보조 추출 (기존 방식)
         if not agent1_result and 'conversationHistory' in event:
