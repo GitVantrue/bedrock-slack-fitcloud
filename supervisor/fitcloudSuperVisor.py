@@ -70,8 +70,8 @@ def lambda_handler(event, context):
         logger.info(f"[Supervisor] 보고서 요청 감지. Agent1 → Agent2 순서로 처리 시작")
         
         try:
-            # 1. Agent1 직접 호출 (동일한 sessionId 사용)
-            logger.info(f"[Supervisor] Agent1({AGENT1_ID}) 호출 시작")
+            # 1. Agent1을 Bedrock Agent Runtime으로 호출
+            logger.info(f"[Supervisor] Agent1({AGENT1_ID}) Bedrock Agent Runtime 호출 시작")
             agent1_response = client.invoke_agent(
                 agentId=AGENT1_ID,
                 agentAliasId=AGENT1_ALIAS,
@@ -79,7 +79,7 @@ def lambda_handler(event, context):
                 inputText=user_input
             )
             
-            # 1. Agent1 응답 chunk 이어붙이기
+            # Agent1 응답 chunk 이어붙이기
             raw_agent1_response = ""
             for event in agent1_response:
                 if 'chunk' in event and 'bytes' in event['chunk']:

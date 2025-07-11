@@ -18,6 +18,10 @@ logger.setLevel(logging.INFO)
 # Agent1 람다 이름 (슈퍼바이저가 처리하므로 선택사항)
 AGENT1_LAMBDA_NAME = os.environ.get("AGENT1_LAMBDA_NAME", "fitcloud_action_part1-wpfe6")
 
+# Agent1 ID와 Alias (Agent2에서 직접 호출할 때 사용)
+AGENT1_ID = os.environ.get("AGENT1_ID", "NBLVKZOU76")
+AGENT1_ALIAS = os.environ.get("AGENT1_ALIAS", "PSADGJ398L")
+
 # 슬랙 토큰/채널ID를 환경변수에서 가져오기 (보안상 하드코딩 금지)
 SLACK_BOT_TOKEN = os.environ.get('SLACK_BOT_TOKEN')
 SLACK_CHANNEL = os.environ.get('SLACK_CHANNEL')
@@ -525,21 +529,91 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                                 logger.info(f"[Agent2] conversationHistory에서 LLM 파싱 성공: {len(agent1_result)}개 항목")
                                 break
         
-        # 3. 최종 검증
+        # 3. 최종 검증 - Agent1 데이터가 없으면 Agent1을 직접 호출
         if not agent1_result:
-            logger.error('[Agent2] Agent1의 데이터를 찾을 수 없습니다.')
-            return {
-                'response': {
-                    'body': {
-                        'content': [
-                            {
-                                'type': 'text',
-                                'text': '[Agent2] Agent1의 데이터가 없습니다. 먼저 비용/사용량을 조회해주세요.'
+            logger.warning('[Agent2] Agent1의 데이터를 찾을 수 없습니다. Agent1을 직접 호출합니다.')
+            
+            try:
+                # Agent1을 직접 호출하여 데이터 조회
+                logger.info('[Agent2] Agent1 직접 호출 시작')
+                
+                # Bedrock Agent Runtime 클라이언트
+                client = boto3.client("bedrock-agent-runtime")
+                
+                # Agent1 ID와 Alias (환경변수에서 가져오기)
+                agent1_id = AGENT1_ID
+                agent1_alias = AGENT1_ALIAS
+                session_id = event.get("sessionId", "agent2-fallback-session")
+                
+                # 사용자 입력에서 날짜/계정 정보 추출
+                user_input = event.get("inputText", "")
+                if not user_input:
+                    # conversationHistory에서 마지막 사용자 요청 추출
+                    if 'conversationHistory' in event:
+                        ch = event['conversationHistory']
+                        if isinstance(ch, dict) and 'messages' in ch:
+                            for msg in reversed(ch['messages']):
+                                if msg.get('role') == 'user':
+                                    user_input = msg.get('content', '')
+                                    if isinstance(user_input, list) and len(user_input) > 0:
+                                        user_input = user_input[0]
+                                    break
+                
+                if not user_input:
+                    user_input = "2025년 5월 태그별 사용량 조회"
+                
+                logger.info(f'[Agent2] Agent1 호출 파라미터: sessionId={session_id}, inputText={user_input}')
+                
+                # Agent1 호출
+                agent1_response = client.invoke_agent(
+                    agentId=agent1_id,
+                    agentAliasId=agent1_alias,
+                    sessionId=session_id,
+                    inputText=user_input
+                )
+                
+                # Agent1 응답 처리
+                raw_agent1_response = ""
+                for event_chunk in agent1_response:
+                    if 'chunk' in event_chunk and 'bytes' in event_chunk['chunk']:
+                        raw_agent1_response += event_chunk['chunk']['bytes'].decode('utf-8')
+                
+                logger.info(f'[Agent2] Agent1 응답 받음 (길이: {len(raw_agent1_response)})')
+                
+                # Agent1 응답을 Agent2에서 파싱
+                agent1_result = parse_agent1_response_with_llm(raw_agent1_response)
+                
+                if agent1_result:
+                    logger.info(f'[Agent2] Agent1 직접 호출로 데이터 획득 성공: {len(agent1_result)}개 항목')
+                else:
+                    logger.error('[Agent2] Agent1 직접 호출 후에도 데이터 파싱 실패')
+                    return {
+                        'response': {
+                            'body': {
+                                'content': [
+                                    {
+                                        'type': 'text',
+                                        'text': '❌ Agent1에서 데이터를 조회할 수 없습니다. 잠시 후 다시 시도해주세요.'
+                                    }
+                                ]
                             }
-                        ]
+                        }
+                    }
+                    
+            except Exception as e:
+                logger.error(f'[Agent2] Agent1 직접 호출 실패: {e}')
+                return {
+                    'response': {
+                        'body': {
+                            'content': [
+                                {
+                                    'type': 'text',
+                                    'text': f'❌ Agent1 호출 중 오류가 발생했습니다: {str(e)}'
+                                }
+                            ]
+                        }
                     }
                 }
-            }
         
         logger.info(f"[Agent2] Agent1 데이터 추출 완료 - 타입: {type(agent1_result)}, 길이: {len(agent1_result) if isinstance(agent1_result, list) else 'N/A'}")
 
@@ -625,7 +699,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 })
             }
         else:
-            # 동기 모드: 기존 Bedrock Agent 응답 형식
+            # 동기 모드: Bedrock Agent가 기대하는 응답 형식
             completion_msg = (
                 f"📊 **{upload_result.get('report_title', '리포트')} 생성 완료!**\n"
                 f"✅ 엑셀 파일이 슬랙 채널에 업로드되었습니다.\n"
@@ -636,6 +710,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             
             logger.info(f"[Agent2] 동기 모드 - Bedrock Agent 응답 반환")
             
+            # Bedrock Agent가 기대하는 응답 형식
             return {
                 'response': {
                     'body': {
@@ -653,13 +728,17 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         import traceback
         tb = traceback.format_exc()
         logger.error(f"[Agent2] 처리 중 오류: {e}\n{tb}", exc_info=True)
+        
+        # Bedrock Agent가 기대하는 응답 형식으로 오류 반환
+        error_message = f"❌ [Agent2] 처리 중 오류가 발생했습니다: {str(e)}"
+        
         return {
             'response': {
                 'body': {
                     'content': [
                         {
                             'type': 'text',
-                            'text': f'❌ [Agent2] 처리 중 오류: {str(e)}'
+                            'text': error_message
                         }
                     ]
                 }
