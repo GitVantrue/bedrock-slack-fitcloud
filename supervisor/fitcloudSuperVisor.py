@@ -105,16 +105,16 @@ def lambda_handler(event, context):
                     }
                 }
             
-            # 2. 마크다운 텍스트만 추출 (JSON 파싱 우선)
-            agent1_result_text = extract_markdown_from_agent1(raw_agent1_response)
-            logger.info(f"[Supervisor] Agent1 추출된 텍스트 (처음 300자): {agent1_result_text[:300]}")
-            logger.info(f"[Supervisor] Agent1 추출된 텍스트 길이: {len(agent1_result_text)}")
+            # 2. Agent1 전체 응답을 그대로 사용 (파싱하지 않음)
+            agent1_result_text = raw_agent1_response
+            logger.info(f"[Supervisor] Agent1 전체 응답 사용 (길이: {len(agent1_result_text)})")
+            logger.info(f"[Supervisor] Agent1 전체 응답 (처음 500자): {agent1_result_text[:500]}")
             
-            # 3. Agent2를 Bedrock Agent Runtime으로 호출 (Agent1 응답 포함)
+            # 3. Agent2를 Bedrock Agent Runtime으로 호출 (Agent1 전체 응답 포함)
             logger.info(f"[Supervisor] Agent2({AGENT2_ID}) Bedrock Agent Runtime 호출 시작")
             try:
-                # Agent1 응답을 포함한 inputText 생성
-                agent2_input_text = f"보고서를 만들어주세요. 조회된 데이터:\n{agent1_result_text}"
+                # Agent1 전체 응답을 포함한 inputText 생성
+                agent2_input_text = f"보고서를 만들어주세요. Agent1에서 조회한 전체 데이터:\n{agent1_result_text}"
                 
                 # Agent2 호출 (동일한 sessionId 사용)
                 agent2_response = client.invoke_agent(
