@@ -83,12 +83,12 @@ def parse_agent1_response_with_llm(input_text: str) -> list:
 
         logger.info(f"[Agent2] Bedrock LLM 호출 시작")
         
-        # Bedrock LLM 호출 (타임아웃 설정 추가)
+        # Bedrock LLM 호출 (타임아웃 설정 단축)
         import botocore
         
         config = botocore.config.Config(
-            read_timeout=300,  # 5분
-            connect_timeout=60  # 1분
+            read_timeout=120,  # 2분으로 단축
+            connect_timeout=30  # 30초로 단축
         )
         
         bedrock_client_with_timeout = boto3.client('bedrock-runtime', config=config)
@@ -322,7 +322,8 @@ def generate_excel_report(data):
         get_upload_url_response = requests.post(
             'https://slack.com/api/files.getUploadURLExternal',
             headers=headers_get_url,
-            files=files_data
+            files=files_data,
+            timeout=30  # 30초 타임아웃 추가
         )
         get_upload_url_result = get_upload_url_response.json()
         if not get_upload_url_result.get('ok'):
@@ -339,7 +340,8 @@ def generate_excel_report(data):
         }
         upload_file_response = requests.post(
             upload_url,
-            files=files
+            files=files,
+            timeout=60  # 60초 타임아웃 추가
         )
         if not upload_file_response.ok:
             raise Exception(f'파일 콘텐츠 업로드에 실패했습니다: {upload_file_response.text}')
@@ -357,7 +359,8 @@ def generate_excel_report(data):
         complete_upload_response = requests.post(
             'https://slack.com/api/files.completeUploadExternal',
             headers=headers_complete_upload,
-            json=payload_complete_upload
+            json=payload_complete_upload,
+            timeout=30  # 30초 타임아웃 추가
         )
         complete_upload_result = complete_upload_response.json()
         if not complete_upload_result.get('ok'):

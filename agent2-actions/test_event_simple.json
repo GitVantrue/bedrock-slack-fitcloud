@@ -1,0 +1,4 @@
+{
+  "inputText": "2025년 4월 AWS 비용 조회 결과:\n\n총 온디맨드 사용금액: $13,289\n\n1. *Relational Database Service*: 약 $6,568 (49.5%)\n2. *Elastic Compute Cloud*: 약 $2,345 (17.6%)\n3. *Simple Storage Service*: 약 $1,890 (14.2%)\n4. *Elastic Load Balancing*: 약 $1,234 (9.3%)\n5. *CloudWatch*: 약 $921 (6.9%)\n6. *기타 서비스*: 약 $331 (2.5%)",
+  "async_mode": true
+} 
