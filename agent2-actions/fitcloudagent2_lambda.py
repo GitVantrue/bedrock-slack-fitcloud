@@ -3,13 +3,13 @@ import os
 import boto3
 import requests
 import logging
+import re
 from typing import Dict, Any
 from http import HTTPStatus
 import openpyxl
 from openpyxl.chart import BarChart, Reference
 import io
 from collections import defaultdict
-import re
 import codecs
 
 logger = logging.getLogger()
