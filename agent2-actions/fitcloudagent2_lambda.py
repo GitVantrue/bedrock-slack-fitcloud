@@ -461,6 +461,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             sa = event['sessionAttributes']
             logger.info(f"[Agent2] sessionAttributes 키: {list(sa.keys())}")
             
+            # 슈퍼바이저가 전달한 Agent1 데이터 우선 확인
             if 'agent1_response' in sa:
                 agent1_response_text = sa['agent1_response']
                 logger.info(f"[Agent2] sessionAttributes에서 agent1_response 발견 (길이: {len(agent1_response_text)})")
@@ -476,6 +477,24 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 agent1_result = parse_agent1_response_with_llm(raw_response)
                 if agent1_result:
                     logger.info(f"[Agent2] raw_response에서 LLM 파싱 성공: {len(agent1_result)}개 항목")
+            
+            # 기존 sessionAttributes에서 비용 데이터 확인
+            elif 'last_cost_message' in sa:
+                cost_message = sa['last_cost_message']
+                logger.info(f"[Agent2] last_cost_message 발견 (길이: {len(cost_message)})")
+                agent1_result = parse_agent1_response_with_llm(cost_message)
+                if agent1_result:
+                    logger.info(f"[Agent2] last_cost_message에서 LLM 파싱 성공: {len(agent1_result)}개 항목")
+            
+            elif 'last_cost_table' in sa:
+                try:
+                    cost_table = json.loads(sa['last_cost_table'])
+                    logger.info(f"[Agent2] last_cost_table 발견 (항목 수: {len(cost_table)})")
+                    agent1_result = cost_table
+                    logger.info(f"[Agent2] last_cost_table에서 직접 파싱 성공: {len(agent1_result)}개 항목")
+                except Exception as e:
+                    logger.error(f"[Agent2] last_cost_table JSON 파싱 실패: {e}")
+                    agent1_result = None
         
         # 2-2. inputText에서 Agent1 데이터 추출 (직접 호출된 경우)
         if not agent1_result and 'inputText' in event:
