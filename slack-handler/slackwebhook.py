@@ -191,17 +191,17 @@ def lambda_handler(event, context):
             bedrock_agent_client = boto3.client('bedrock-agent-runtime')
             
             # 환경 변수에서 슈퍼바이저 Agent ID와 Alias ID 가져오기
-            # 슈퍼바이저가 요청을 분석하여 Agent1 또는 Agent2로 라우팅
-            agent_id = os.environ.get('SUPERVISOR_AGENT_ID')
-            agent_alias_id = os.environ.get('SUPERVISOR_AGENT_ALIAS_ID')
+            # 슈퍼바이저 Agent 안에 Agent1, Agent2가 콜라보로 등록되어 있음
+            agent_id = os.environ.get('BEDROCK_AGENT_ID')
+            agent_alias_id = os.environ.get('BEDROCK_AGENT_ALIAS_ID')
             
-            if not agent_id or agent_id == 'YOUR_SUPERVISOR_AGENT_ID':
-                logger.error("SUPERVISOR_AGENT_ID environment variable is not set or has default value")
+            if not agent_id or agent_id == 'YOUR_BEDROCK_AGENT_ID':
+                logger.error("BEDROCK_AGENT_ID environment variable is not set or has default value")
                 send_slack_message(channel_id, f"죄송합니다, <@{user_id}>님. 시스템 설정 오류가 발생했습니다.")
                 return {'statusCode': 500, 'body': 'Internal Server Error'}
                 
-            if not agent_alias_id or agent_alias_id == 'YOUR_SUPERVISOR_AGENT_ALIAS_ID':
-                logger.error("SUPERVISOR_AGENT_ALIAS_ID environment variable is not set or has default value")
+            if not agent_alias_id or agent_alias_id == 'YOUR_BEDROCK_AGENT_ALIAS_ID':
+                logger.error("BEDROCK_AGENT_ALIAS_ID environment variable is not set or has default value")
                 send_slack_message(channel_id, f"죄송합니다, <@{user_id}>님. 시스템 설정 오류가 발생했습니다.")
                 return {'statusCode': 500, 'body': 'Internal Server Error'}
 
@@ -211,7 +211,7 @@ def lambda_handler(event, context):
             current_date_str = datetime.now().strftime('%Y년 %m월 %d일')
             current_year_str = str(datetime.now().year)
 
-            logger.info(f"Invoking Supervisor Agent with text: '{text_for_agent}' for session: '{session_id}' "
+            logger.info(f"Invoking Bedrock Agent (Supervisor with Collaboration) with text: '{text_for_agent}' for session: '{session_id}' "
                         f"with current_date: {current_date_str}, current_year: {current_year_str}")
             logger.info(f"[DEBUG][slackwebhook] sessionAttributes 전달: current_year={current_year_str}, current_date={current_date_str}")
 
