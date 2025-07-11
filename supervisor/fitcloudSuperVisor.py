@@ -69,12 +69,12 @@ def lambda_handler(event, context):
         # 보고서 요청: Agent1 → Agent2 순서로 처리
         logger.info(f"[Supervisor] 보고서 요청 감지. Agent1 → Agent2 순서로 처리 시작")
         
-        # 1. Agent1 직접 호출
+        # 1. Agent1 직접 호출 (동일한 sessionId 사용)
         logger.info(f"[Supervisor] Agent1({AGENT1_ID}) 호출 시작")
         agent1_response = client.invoke_agent(
             agentId=AGENT1_ID,
             agentAliasId=AGENT1_ALIAS,
-            sessionId=session_id,
+            sessionId=session_id,  # 동일한 sessionId 사용
             inputText=user_input
         )
         
@@ -93,16 +93,23 @@ def lambda_handler(event, context):
         logger.info(f"[Supervisor] Agent1 추출된 텍스트 (처음 300자): {agent1_result_text[:300]}")
         logger.info(f"[Supervisor] Agent1 추출된 텍스트 길이: {len(agent1_result_text)}")
         
-        # 3. Agent2 호출
+        # 3. Agent2 호출 (동일한 sessionId + sessionAttributes에 Agent1 응답 저장)
         agent2_input_text = f"보고서를 만들어주세요. 조회된 데이터:\n{agent1_result_text}"
         logger.info(f"[Supervisor] Agent2 호출용 inputText: {agent2_input_text[:300]}")
+        logger.info(f"[Supervisor] Agent2 호출 시 sessionId: {session_id}")
+        
         agent2_response = client.invoke_agent(
             agentId=AGENT2_ID,
             agentAliasId=AGENT2_ALIAS,
-            sessionId=session_id,
+            sessionId=session_id,  # 동일한 sessionId 사용
             inputText=agent2_input_text,
             sessionState={
-                "sessionAttributes": {}
+                "sessionAttributes": {
+                    "agent1_response": agent1_result_text,
+                    "agent1_raw_response": raw_agent1_response,
+                    "supervisor_session": "true",
+                    "report_request": "true"
+                }
             }
         )
         agent2_result = ""
@@ -139,7 +146,7 @@ def lambda_handler(event, context):
         agent1_response = client.invoke_agent(
             agentId=AGENT1_ID,
             agentAliasId=AGENT1_ALIAS,
-            sessionId=session_id,
+            sessionId=session_id,  # 동일한 sessionId 사용
             inputText=user_input
         )
         

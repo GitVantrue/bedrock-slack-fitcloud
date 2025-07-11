@@ -267,59 +267,113 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 params = {"user_input": params}
         logger.info(f"[Agent2] 입력 파라미터: {params}")
 
-        # Agent1 결과 추출 로직 보강
+        # Agent1 결과 추출 로직 보강 (sessionAttributes 우선)
         agent1_result = None
-        # 1. sessionAttributes에서 우선 추출
+        logger.info(f"[Agent2] sessionAttributes에서 Agent1 데이터 추출 시도")
+        
+        # 1. sessionAttributes에서 우선 추출 (슈퍼바이저가 전달한 데이터)
         if 'sessionAttributes' in event and isinstance(event['sessionAttributes'], dict):
             sa = event['sessionAttributes']
-            if 'agent1_result' in sa:
-                agent1_result = sa['agent1_result']
-            elif 'agent1_result_json' in sa:
-                agent1_result = sa['agent1_result_json']
-        # 2. conversationHistory에서 보조 추출
+            logger.info(f"[Agent2] sessionAttributes 키 목록: {list(sa.keys())}")
+            
+            # 슈퍼바이저가 전달한 Agent1 응답 확인
+            if 'agent1_response' in sa:
+                agent1_response_text = sa['agent1_response']
+                logger.info(f"[Agent2] sessionAttributes에서 agent1_response 발견 (길이: {len(agent1_response_text)})")
+                
+                # Agent1 응답에서 JSON 데이터 추출
+                try:
+                    # 마크다운 내 JSON 코드블록 파싱
+                    json_match = re.search(r'```json\s*(\[.*?\])\s*```', agent1_response_text, re.DOTALL)
+                    if json_match:
+                        agent1_result = json.loads(json_match.group(1))
+                        logger.info(f"[Agent2] JSON 코드블록에서 데이터 추출 성공 (레코드 수: {len(agent1_result)})")
+                    else:
+                        # 일반 JSON 파싱 시도
+                        agent1_result = json.loads(agent1_response_text)
+                        logger.info(f"[Agent2] 일반 JSON 파싱 성공 (레코드 수: {len(agent1_result)})")
+                except json.JSONDecodeError as e:
+                    logger.warning(f"[Agent2] JSON 파싱 실패: {e}")
+                    # JSON 파싱 실패 시 텍스트 그대로 사용 (Agent1이 텍스트로 응답한 경우)
+                    agent1_result = agent1_response_text
+                    logger.info(f"[Agent2] JSON 파싱 실패로 텍스트 그대로 사용")
+            
+            elif 'agent1_raw_response' in sa:
+                # 원본 응답에서도 시도
+                raw_response = sa['agent1_raw_response']
+                logger.info(f"[Agent2] agent1_raw_response 발견 (길이: {len(raw_response)})")
+                try:
+                    json_match = re.search(r'```json\s*(\[.*?\])\s*```', raw_response, re.DOTALL)
+                    if json_match:
+                        agent1_result = json.loads(json_match.group(1))
+                        logger.info(f"[Agent2] raw_response에서 JSON 추출 성공")
+                except Exception as e:
+                    logger.warning(f"[Agent2] raw_response 파싱 실패: {e}")
+        
+        # 2. conversationHistory에서 보조 추출 (기존 방식)
         if not agent1_result and 'conversationHistory' in event:
+            logger.info(f"[Agent2] conversationHistory에서 Agent1 데이터 추출 시도")
             ch = event['conversationHistory']
             if isinstance(ch, dict) and 'messages' in ch:
                 for msg in ch['messages']:
                     if msg.get('role') == 'assistant' and msg.get('content'):
-                        agent1_result = msg['content'][0]
+                        content = msg['content']
+                        if isinstance(content, list) and len(content) > 0:
+                            content_text = content[0]
+                            logger.info(f"[Agent2] conversationHistory에서 assistant 메시지 발견 (길이: {len(content_text)})")
+                            try:
+                                # JSON 파싱 시도
+                                agent1_result = json.loads(content_text)
+                                logger.info(f"[Agent2] conversationHistory에서 JSON 파싱 성공")
+                                break
+                            except json.JSONDecodeError:
+                                logger.warning(f"[Agent2] conversationHistory JSON 파싱 실패")
+        
+        # 3. 최종 검증
         if not agent1_result:
-            logger.error('[Agent2] Agent1의 데이터가 없습니다. 먼저 비용/사용량을 조회해주세요.')
-            return {
-                'body': {
-                    'content': [
-                        {
-                            'type': 'text',
-                            'text': '[Agent2] Agent1의 데이터가 없습니다. 먼저 비용/사용량을 조회해주세요.'
-                        }
-                    ]
-                }
-            }
-        # 이후 agent1_result를 활용해 보고서 생성 로직 진행
-
-        # === 데이터가 없으면 오류 처리 ===
-        if not agent1_result:
-            error_msg = "Agent1의 데이터가 없습니다. 먼저 비용/사용량을 조회해주세요."
-            logger.error(f"[Agent2] {error_msg}")
-            logger.error(f"[Agent2] conversationHistory keys: {list(conversation_history.keys())}")
-            logger.error(f"[Agent2] sessionAttributes keys: {list(session_attrs.keys())}")
+            logger.error('[Agent2] Agent1의 데이터를 찾을 수 없습니다.')
+            logger.error(f"[Agent2] sessionAttributes 키: {list(event.get('sessionAttributes', {}).keys())}")
+            logger.error(f"[Agent2] conversationHistory 존재: {'conversationHistory' in event}")
             return {
                 'response': {
                     'body': {
                         'content': [
                             {
                                 'type': 'text',
-                                'text': f'❌ [Agent2] {error_msg}'
+                                'text': '[Agent2] Agent1의 데이터가 없습니다. 먼저 비용/사용량을 조회해주세요.'
                             }
                         ]
                     }
                 }
             }
+        
+        logger.info(f"[Agent2] Agent1 데이터 추출 완료 - 타입: {type(agent1_result)}, 길이: {len(agent1_result) if isinstance(agent1_result, list) else 'N/A'}")
 
         # 데이터 검증
-        if not agent1_result or not isinstance(agent1_result, list) or len(agent1_result) == 0:
-            logger.error(f"[Agent2] 유효하지 않은 데이터: {type(agent1_result)}, 길이: {len(agent1_result) if isinstance(agent1_result, list) else 'N/A'}")
-            raise ValueError("유효하지 않은 데이터입니다. 리스트 형태의 데이터가 필요합니다.")
+        if not agent1_result:
+            logger.error(f"[Agent2] Agent1 데이터가 없습니다")
+            raise ValueError("Agent1의 데이터가 없습니다. 먼저 비용/사용량을 조회해주세요.")
+        
+        # 리스트 형태가 아닌 경우 처리 (텍스트 응답인 경우)
+        if not isinstance(agent1_result, list):
+            logger.warning(f"[Agent2] Agent1 응답이 리스트가 아님: {type(agent1_result)}")
+            # 텍스트 응답인 경우 빈 리스트로 처리
+            agent1_result = []
+        
+        if len(agent1_result) == 0:
+            logger.warning(f"[Agent2] Agent1 데이터가 비어있음")
+            return {
+                'response': {
+                    'body': {
+                        'content': [
+                            {
+                                'type': 'text',
+                                'text': '📊 Agent1에서 조회된 데이터가 없습니다. 다른 조건으로 조회해보세요.'
+                            }
+                        ]
+                    }
+                }
+            }
 
         logger.info(f"[Agent2] 데이터 검증 완료, 레코드 수: {len(agent1_result)}")
 
