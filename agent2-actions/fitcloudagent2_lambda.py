@@ -149,7 +149,6 @@ def parse_agent1_response_with_llm(input_text: str) -> list:
         try:
             logger.info(f"[Agent2] LLM 실패, 기본 파싱 시도")
             # Agent1 응답에서 숫자와 서비스명 추출
-            import re
             
             # 총 금액 추출
             total_match = re.search(r'총 온디맨드 사용금액: \$([0-9,]+\.?\d*)', input_text)
