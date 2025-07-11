@@ -580,7 +580,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             logger.error(f"[Agent2] 엑셀 생성 실패 상세: {traceback.format_exc()}")
             raise
 
-        # 6. 결과 반환 (비동기 모드 확인)
+        # 6. 결과 반환 (동기/비동기 모드 확인)
         async_mode = event.get('async_mode', False)
         
         if async_mode:

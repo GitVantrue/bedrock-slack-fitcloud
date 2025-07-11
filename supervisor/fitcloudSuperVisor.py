@@ -110,8 +110,8 @@ def lambda_handler(event, context):
             logger.info(f"[Supervisor] Agent1 추출된 텍스트 (처음 300자): {agent1_result_text[:300]}")
             logger.info(f"[Supervisor] Agent1 추출된 텍스트 길이: {len(agent1_result_text)}")
             
-            # 3. Agent2 Lambda 비동기 호출 (보고서 생성)
-            logger.info(f"[Supervisor] Agent2 Lambda 비동기 호출 시작")
+            # 3. Agent2 Lambda 동기 호출 (보고서 생성)
+            logger.info(f"[Supervisor] Agent2 Lambda 동기 호출 시작")
             try:
                 lambda_client = boto3.client('lambda')
                 agent2_lambda_name = "fitcloud_action_part2-wpfe6"
@@ -127,29 +127,42 @@ def lambda_handler(event, context):
                     },
                     "parameters": event.get("parameters", {}),
                     "requestBody": event.get("requestBody", {}),
-                    "async_mode": True  # 비동기 모드 플래그
+                    "async_mode": False  # 동기 모드로 변경
                 }
                 
-                # Agent2 Lambda 비동기 호출 (응답 기다리지 않음)
-                lambda_client.invoke(
+                # Agent2 Lambda 동기 호출 (응답 기다림)
+                agent2_response = lambda_client.invoke(
                     FunctionName=agent2_lambda_name,
-                    InvocationType='Event',  # 비동기 호출
+                    InvocationType='RequestResponse',  # 동기 호출로 변경
                     Payload=json.dumps(agent2_payload)
                 )
-                logger.info(f"[Supervisor] Agent2 Lambda 비동기 호출 성공")
+                
+                # Agent2 응답 파싱
+                agent2_payload_response = json.loads(agent2_response['Payload'].read().decode('utf-8'))
+                logger.info(f"[Supervisor] Agent2 Lambda 동기 호출 성공")
+                
+                # Agent2 응답에서 메시지 추출
+                agent2_message = ""
+                if 'response' in agent2_payload_response and 'body' in agent2_payload_response['response']:
+                    content = agent2_payload_response['response']['body']['content']
+                    if content and len(content) > 0:
+                        agent2_message = content[0].get('text', '')
+                
+                # 완전한 응답 생성 (Agent1 + Agent2 결과)
+                completion_message = (
+                    f"{agent1_result_text}\n\n"
+                    f"📊 **보고서 생성 완료!**\n"
+                    f"{agent2_message}"
+                )
                 
             except Exception as agent2_e:
                 logger.error(f"[Supervisor] Agent2 Lambda 호출 실패: {agent2_e}")
-                # Agent2 호출 실패해도 Agent1 응답은 반환
-            
-            # Agent1 응답을 즉시 반환 (보고서 생성은 백그라운드에서 진행)
-            completion_message = (
-                f"{agent1_result_text}\n\n"
-                f"📊 **보고서 생성이 시작되었습니다!**\n"
-                f"✅ 데이터 조회가 완료되었습니다.\n"
-                f"🔄 엑셀 보고서를 생성하고 슬랙에 업로드 중입니다...\n"
-                f"⏱️ 완료되면 슬랙 채널에 파일이 업로드됩니다."
-            )
+                # Agent2 호출 실패 시 Agent1 응답만 반환
+                completion_message = (
+                    f"{agent1_result_text}\n\n"
+                    f"❌ **보고서 생성 실패**\n"
+                    f"데이터 조회는 완료되었지만 보고서 생성 중 오류가 발생했습니다."
+                )
             
             return {
                 'response': {
