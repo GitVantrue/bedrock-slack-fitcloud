@@ -53,36 +53,32 @@ def parse_agent1_response_with_llm(input_text: str) -> list:
             # 실패 시 원본 텍스트 사용
             logger.info(f"[Agent2] 원본 텍스트 사용 (처음 300자): {input_text[:300]}")
         
-        # LLM에게 파싱 요청
+        # LLM에게 파싱 요청 (개선된 프롬프트)
         prompt = f"""
 다음은 AWS 비용/사용량 조회 결과입니다. 이 텍스트를 분석해서 엑셀 파일에 적합한 구조화된 데이터로 변환해주세요.
 
+**중요**: 모든 서비스 항목을 누락 없이 추출해야 합니다. 텍스트에 언급된 모든 서비스와 금액을 포함하세요.
+
 요구사항:
-1. 서비스명, 비용, 비율 등의 정보를 추출
-2. JSON 배열 형태로 반환
-3. 각 항목은 serviceName, usageFeeUSD, percentage, billingPeriod 필드를 포함
-4. 월 정보가 있으면 billingPeriod에 YYYYMM 형식으로 포함
-5. 기타 서비스도 별도 항목으로 포함
+1. 텍스트에 언급된 **모든 서비스**를 추출 (누락 금지)
+2. 각 서비스의 이름, 금액, 비율을 정확히 추출
+3. JSON 배열 형태로 반환
+4. 각 항목은 serviceName, usageFeeUSD, percentage, billingPeriod 필드를 포함
+5. 월 정보가 있으면 billingPeriod에 YYYYMM 형식으로 포함
+6. "기타 서비스"나 "기타" 항목도 별도로 포함
+7. 총 37개 항목이 있다면 37개 모두 추출
+
+**파싱 규칙**:
+- "**서비스명**: $금액 (비율%)" 패턴 추출
+- "기타 서비스: $금액 (비율%)" 패턴도 추출
+- 모든 숫자와 비율을 정확히 포함
+- 서비스명에 특수문자(*, -, 등)가 있어도 그대로 포함
 
 입력 텍스트:
 {input_text}
 
 응답은 반드시 JSON 배열 형태로만 반환하세요. 다른 설명이나 텍스트는 포함하지 마세요.
-예시 형식:
-[
-  {{
-    "serviceName": "Relational Database Service",
-    "usageFeeUSD": 6568.0,
-    "percentage": 49.5,
-    "billingPeriod": "202506"
-  }},
-  {{
-    "serviceName": "기타 서비스",
-    "usageFeeUSD": 921.0,
-    "percentage": 6.9,
-    "billingPeriod": "202506"
-  }}
-]
+모든 서비스를 누락 없이 포함해야 합니다.
 """
 
         logger.info(f"[Agent2] Bedrock LLM 호출 시작")
@@ -101,7 +97,7 @@ def parse_agent1_response_with_llm(input_text: str) -> list:
             modelId='anthropic.claude-3-5-sonnet-20240620-v1:0',
             body=json.dumps({
                 "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 4000,
+                "max_tokens": 8000,  # 토큰 제한 증가
                 "messages": [
                     {
                         "role": "user",
@@ -133,9 +129,14 @@ def parse_agent1_response_with_llm(input_text: str) -> list:
             
             logger.info(f"[Agent2] LLM 파싱 성공: {len(parsed_data)}개 항목")
             
-            # 파싱된 데이터 로그
-            for i, item in enumerate(parsed_data[:3]):  # 처음 3개만 로그
+            # 파싱된 데이터 로그 (모든 항목)
+            for i, item in enumerate(parsed_data):
                 logger.info(f"[Agent2] 파싱된 항목 {i+1}: {item}")
+            
+            # 파싱 결과 요약
+            total_amount = sum(item.get('usageFeeUSD', 0) for item in parsed_data)
+            logger.info(f"[Agent2] 파싱된 총 금액: ${total_amount:,.2f}")
+            logger.info(f"[Agent2] 파싱된 항목 수: {len(parsed_data)}개")
             
             return parsed_data
             
