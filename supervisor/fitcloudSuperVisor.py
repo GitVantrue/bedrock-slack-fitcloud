@@ -69,113 +69,167 @@ def lambda_handler(event, context):
         # 보고서 요청: Agent1 → Agent2 순서로 처리
         logger.info(f"[Supervisor] 보고서 요청 감지. Agent1 → Agent2 순서로 처리 시작")
         
-        # 1. Agent1 직접 호출 (동일한 sessionId 사용)
-        logger.info(f"[Supervisor] Agent1({AGENT1_ID}) 호출 시작")
-        agent1_response = client.invoke_agent(
-            agentId=AGENT1_ID,
-            agentAliasId=AGENT1_ALIAS,
-            sessionId=session_id,  # 동일한 sessionId 사용
-            inputText=user_input
-        )
-        
-        # 1. Agent1 응답 chunk 이어붙이기
-        raw_agent1_response = ""
-        for event in agent1_response:
-            if 'chunk' in event and 'bytes' in event['chunk']:
-                raw_agent1_response += event['chunk']['bytes'].decode('utf-8')
-        
-        # Agent1 원본 응답 로그 추가
-        logger.info(f"[Supervisor] Agent1 원본 응답 (처음 500자): {raw_agent1_response[:500]}")
-        logger.info(f"[Supervisor] Agent1 원본 응답 길이: {len(raw_agent1_response)}")
-        
-        # 2. 마크다운 텍스트만 추출 (JSON 파싱 우선)
-        agent1_result_text = extract_markdown_from_agent1(raw_agent1_response)
-        logger.info(f"[Supervisor] Agent1 추출된 텍스트 (처음 300자): {agent1_result_text[:300]}")
-        logger.info(f"[Supervisor] Agent1 추출된 텍스트 길이: {len(agent1_result_text)}")
-        
-        # 3. Agent2 호출 (동일한 sessionId + sessionAttributes에 Agent1 응답 저장)
-        agent2_input_text = f"보고서를 만들어주세요. 조회된 데이터:\n{agent1_result_text}"
-        logger.info(f"[Supervisor] Agent2 호출용 inputText: {agent2_input_text[:300]}")
-        logger.info(f"[Supervisor] Agent2 호출 시 sessionId: {session_id}")
-        
-        agent2_response = client.invoke_agent(
-            agentId=AGENT2_ID,
-            agentAliasId=AGENT2_ALIAS,
-            sessionId=session_id,  # 동일한 sessionId 사용
-            inputText=agent2_input_text,
-            sessionState={
-                "sessionAttributes": {
-                    "agent1_response": agent1_result_text,
-                    "agent1_raw_response": raw_agent1_response,
-                    "supervisor_session": "true",
-                    "report_request": "true"
-                }
-            }
-        )
-        agent2_result = ""
         try:
-            for event in agent2_response:
+            # 1. Agent1 직접 호출 (동일한 sessionId 사용)
+            logger.info(f"[Supervisor] Agent1({AGENT1_ID}) 호출 시작")
+            agent1_response = client.invoke_agent(
+                agentId=AGENT1_ID,
+                agentAliasId=AGENT1_ALIAS,
+                sessionId=session_id,  # 동일한 sessionId 사용
+                inputText=user_input
+            )
+            
+            # 1. Agent1 응답 chunk 이어붙이기
+            raw_agent1_response = ""
+            for event in agent1_response:
                 if 'chunk' in event and 'bytes' in event['chunk']:
-                    agent2_result += event['chunk']['bytes'].decode('utf-8')
-        except Exception as e:
-            logger.error(f"Agent2 EventStream 파싱 실패: {e}")
-            agent2_result = f"Agent2 호출 실패: {str(e)}"
-        if not agent2_result:
-            agent2_result = "[Supervisor] Agent2로부터 유효한 응답을 받지 못했습니다."
-        logger.info(f"[Supervisor] Agent2 최종 응답: {agent2_result[:300]}")
-        
-        # 최종 응답 반환
-        return {
-            'response': {
-                'body': {
-                    'content': [
-                        {
-                            'type': 'text',
-                            'text': agent2_result
-                        }
-                    ]
+                    raw_agent1_response += event['chunk']['bytes'].decode('utf-8')
+            
+            # Agent1 원본 응답 로그 추가
+            logger.info(f"[Supervisor] Agent1 원본 응답 (처음 500자): {raw_agent1_response[:500]}")
+            logger.info(f"[Supervisor] Agent1 원본 응답 길이: {len(raw_agent1_response)}")
+            
+            # 2. 마크다운 텍스트만 추출 (JSON 파싱 우선)
+            agent1_result_text = extract_markdown_from_agent1(raw_agent1_response)
+            logger.info(f"[Supervisor] Agent1 추출된 텍스트 (처음 300자): {agent1_result_text[:300]}")
+            logger.info(f"[Supervisor] Agent1 추출된 텍스트 길이: {len(agent1_result_text)}")
+            
+            # 3. Agent2 호출 (동일한 sessionId + sessionAttributes에 Agent1 응답 저장)
+            agent2_input_text = f"보고서를 만들어주세요. 조회된 데이터:\n{agent1_result_text}"
+            logger.info(f"[Supervisor] Agent2 호출용 inputText: {agent2_input_text[:300]}")
+            logger.info(f"[Supervisor] Agent2 호출 시 sessionId: {session_id}")
+            
+            agent2_response = client.invoke_agent(
+                agentId=AGENT2_ID,
+                agentAliasId=AGENT2_ALIAS,
+                sessionId=session_id,  # 동일한 sessionId 사용
+                inputText=agent2_input_text,
+                sessionState={
+                    "sessionAttributes": {
+                        "agent1_response": agent1_result_text,
+                        "agent1_raw_response": raw_agent1_response,
+                        "supervisor_session": "true",
+                        "report_request": "true"
+                    }
+                }
+            )
+            agent2_result = ""
+            try:
+                for event in agent2_response:
+                    if 'chunk' in event and 'bytes' in event['chunk']:
+                        agent2_result += event['chunk']['bytes'].decode('utf-8')
+            except Exception as e:
+                logger.error(f"Agent2 EventStream 파싱 실패: {e}")
+                agent2_result = f"Agent2 호출 실패: {str(e)}"
+            if not agent2_result:
+                agent2_result = "[Supervisor] Agent2로부터 유효한 응답을 받지 못했습니다."
+            logger.info(f"[Supervisor] Agent2 최종 응답: {agent2_result[:300]}")
+            
+            # 최종 응답 반환
+            return {
+                'response': {
+                    'body': {
+                        'content': [
+                            {
+                                'type': 'text',
+                                'text': agent2_result
+                            }
+                        ]
+                    }
                 }
             }
-        }
+            
+        except Exception as e:
+            logger.error(f"[Supervisor] 보고서 생성 중 오류: {e}")
+            import traceback
+            logger.error(f"[Supervisor] 보고서 생성 오류 상세: {traceback.format_exc()}")
+            
+            # 에러 발생 시 사용자 친화적 메시지 반환
+            error_message = f"보고서 생성 중 오류가 발생했습니다: {str(e)}"
+            return {
+                'response': {
+                    'body': {
+                        'content': [
+                            {
+                                'type': 'text',
+                                'text': error_message
+                            }
+                        ]
+                    }
+                }
+            }
     else:
         # 단순 조회 요청: Agent1만 호출
         logger.info(f"[Supervisor] 단순 조회 요청 감지. Agent1만 호출")
         
-        # Agent1 직접 호출
-        logger.info(f"[Supervisor] Agent1({AGENT1_ID}) 호출 시작")
-        agent1_response = client.invoke_agent(
-            agentId=AGENT1_ID,
-            agentAliasId=AGENT1_ALIAS,
-            sessionId=session_id,  # 동일한 sessionId 사용
-            inputText=user_input
-        )
-        
-        # Agent1 응답 처리
-        raw_agent1_response = ""
-        for event in agent1_response:
-            if 'chunk' in event and 'bytes' in event['chunk']:
-                raw_agent1_response += event['chunk']['bytes'].decode('utf-8')
-        
-        logger.info(f"[Supervisor] Agent1 원본 응답 (처음 500자): {raw_agent1_response[:500]}")
-        logger.info(f"[Supervisor] Agent1 원본 응답 길이: {len(raw_agent1_response)}")
-        
-        # Agent1 응답을 그대로 반환
-        return {
-            'response': {
-                'body': {
-                    'content': [
-                        {
-                            'type': 'text',
-                            'text': raw_agent1_response
-                        }
-                    ]
+        try:
+            # Agent1 직접 호출
+            logger.info(f"[Supervisor] Agent1({AGENT1_ID}) 호출 시작")
+            agent1_response = client.invoke_agent(
+                agentId=AGENT1_ID,
+                agentAliasId=AGENT1_ALIAS,
+                sessionId=session_id,  # 동일한 sessionId 사용
+                inputText=user_input
+            )
+            
+            # Agent1 응답 처리
+            raw_agent1_response = ""
+            for event in agent1_response:
+                if 'chunk' in event and 'bytes' in event['chunk']:
+                    raw_agent1_response += event['chunk']['bytes'].decode('utf-8')
+            
+            logger.info(f"[Supervisor] Agent1 원본 응답 (처음 500자): {raw_agent1_response[:500]}")
+            logger.info(f"[Supervisor] Agent1 원본 응답 길이: {len(raw_agent1_response)}")
+            
+            # Agent1 응답을 적절히 파싱하여 반환 (기존 형식 유지)
+            agent1_result_text = extract_markdown_from_agent1(raw_agent1_response)
+            logger.info(f"[Supervisor] Agent1 파싱된 응답 (처음 300자): {agent1_result_text[:300]}")
+            
+            # 최종 응답 반환
+            return {
+                'response': {
+                    'body': {
+                        'content': [
+                            {
+                                'type': 'text',
+                                'text': agent1_result_text
+                            }
+                        ]
+                    }
                 }
             }
-        }
+            
+        except Exception as e:
+            logger.error(f"[Supervisor] Agent1 호출 중 오류: {e}")
+            import traceback
+            logger.error(f"[Supervisor] Agent1 호출 오류 상세: {traceback.format_exc()}")
+            
+            # 에러 발생 시 사용자 친화적 메시지 반환
+            error_message = f"비용 조회 중 오류가 발생했습니다: {str(e)}"
+            return {
+                'response': {
+                    'body': {
+                        'content': [
+                            {
+                                'type': 'text',
+                                'text': error_message
+                            }
+                        ]
+                    }
+                }
+            }
 
 def extract_markdown_from_agent1(raw_response: str) -> str:
+    """
+    Agent1의 응답에서 사용자에게 보여줄 텍스트를 추출합니다.
+    다양한 응답 형식을 처리하여 안정적으로 동작합니다.
+    """
+    if not raw_response or not raw_response.strip():
+        logger.warning("[Supervisor] Agent1 응답이 비어있습니다.")
+        return "Agent1에서 응답을 받지 못했습니다."
+    
     try:
-        # 1. JSON 파싱 시도
+        # 1. JSON 파싱 시도 (Bedrock Agent 응답 형식)
         parsed_json = json.loads(raw_response)
         if 'output' in parsed_json and \
            'message' in parsed_json['output'] and \
@@ -228,4 +282,13 @@ def extract_markdown_from_agent1(raw_response: str) -> str:
             return '\n'.join(meaningful_lines)
         
         logger.warning("[Supervisor] 모든 패턴으로 텍스트 추출 실패. Agent1 원본 응답 반환.")
+        # 원본 응답이 너무 길면 잘라서 반환
+        if len(raw_response) > 2000:
+            return raw_response[:2000] + "\n\n... (응답이 너무 길어 일부만 표시됩니다)"
+        return raw_response.strip()
+    except Exception as e:
+        logger.error(f"[Supervisor] Agent1 응답 파싱 중 예상치 못한 오류: {e}")
+        # 파싱 실패 시 원본 응답 반환 (안전장치)
+        if len(raw_response) > 2000:
+            return raw_response[:2000] + "\n\n... (응답이 너무 길어 일부만 표시됩니다)"
         return raw_response.strip() 
