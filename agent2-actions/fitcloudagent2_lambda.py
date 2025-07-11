@@ -5,12 +5,9 @@ import requests
 import logging
 import re
 from typing import Dict, Any
-from http import HTTPStatus
 import openpyxl
 from openpyxl.chart import BarChart, Reference
 import io
-from collections import defaultdict
-import codecs
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -53,7 +50,7 @@ def parse_agent1_response_with_llm(input_text: str) -> list:
             # 실패 시 원본 텍스트 사용
             logger.info(f"[Agent2] 원본 텍스트 사용 (처음 300자): {input_text[:300]}")
         
-        # LLM에게 파싱 요청 (개선된 프롬프트)
+        # LLM에게 파싱 요청 (더 강력한 프롬프트)
         prompt = f"""
 다음은 AWS 비용/사용량 조회 결과입니다. 이 텍스트를 분석해서 엑셀 파일에 적합한 구조화된 데이터로 변환해주세요.
 
@@ -66,7 +63,7 @@ def parse_agent1_response_with_llm(input_text: str) -> list:
 4. 각 항목은 serviceName, usageFeeUSD, percentage, billingPeriod 필드를 포함
 5. 월 정보가 있으면 billingPeriod에 YYYYMM 형식으로 포함
 6. "기타 서비스"나 "기타" 항목도 별도로 포함
-7. 총 37개 항목이 있다면 37개 모두 추출
+7. 총 38개 항목이 있다면 38개 모두 추출
 
 **파싱 규칙**:
 - "**서비스명**: $금액 (비율%)" 패턴 추출
@@ -79,6 +76,12 @@ def parse_agent1_response_with_llm(input_text: str) -> list:
 1. [RESPONSE][message] 섹션의 데이터
 2. 마크다운 형식의 서비스별 데이터
 3. 기타 서비스 정보
+
+**예시 패턴**:
+- **AmazonRDS**: $10,041.24 (46.5%)
+- **Saltware Care Pack (FR)**: $4,726.33 (21.9%)
+- **AmazonEC2**: $2,086.94 (9.7%)
+- **기타 서비스**: $1,584.74 (7.3%)
 
 입력 텍스트:
 {input_text}
@@ -175,7 +178,7 @@ def parse_agent1_response_with_llm(input_text: str) -> list:
                     "serviceName": service_name.strip(),
                     "usageFeeUSD": float(amount.replace(',', '')),
                     "percentage": float(percentage),
-                    "billingPeriod": "202504"  # 기본값
+                    "billingPeriod": datetime.now().strftime("%Y%m")  # 현재 월을 기본값으로
                 })
             
             if services:
@@ -467,48 +470,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # 2. Agent1 데이터 추출
         agent1_result = None
         
-        # 2-1. sessionAttributes에서 Agent1 데이터 추출 (슈퍼바이저가 전달한 데이터)
-        if 'sessionAttributes' in event and isinstance(event['sessionAttributes'], dict):
-            sa = event['sessionAttributes']
-            logger.info(f"[Agent2] sessionAttributes 키: {list(sa.keys())}")
-            
-            # 슈퍼바이저가 전달한 Agent1 데이터 우선 확인
-            if 'agent1_response' in sa:
-                agent1_response_text = sa['agent1_response']
-                logger.info(f"[Agent2] sessionAttributes에서 agent1_response 발견 (길이: {len(agent1_response_text)})")
-                
-                # LLM을 사용해서 Agent1 응답 파싱
-                agent1_result = parse_agent1_response_with_llm(agent1_response_text)
-                if agent1_result:
-                    logger.info(f"[Agent2] sessionAttributes에서 LLM 파싱 성공: {len(agent1_result)}개 항목")
-            
-            elif 'agent1_raw_response' in sa:
-                raw_response = sa['agent1_raw_response']
-                logger.info(f"[Agent2] agent1_raw_response 발견 (길이: {len(raw_response)})")
-                agent1_result = parse_agent1_response_with_llm(raw_response)
-                if agent1_result:
-                    logger.info(f"[Agent2] raw_response에서 LLM 파싱 성공: {len(agent1_result)}개 항목")
-            
-            # 기존 sessionAttributes에서 비용 데이터 확인
-            elif 'last_cost_message' in sa:
-                cost_message = sa['last_cost_message']
-                logger.info(f"[Agent2] last_cost_message 발견 (길이: {len(cost_message)})")
-                agent1_result = parse_agent1_response_with_llm(cost_message)
-                if agent1_result:
-                    logger.info(f"[Agent2] last_cost_message에서 LLM 파싱 성공: {len(agent1_result)}개 항목")
-            
-            elif 'last_cost_table' in sa:
-                try:
-                    cost_table = json.loads(sa['last_cost_table'])
-                    logger.info(f"[Agent2] last_cost_table 발견 (항목 수: {len(cost_table)})")
-                    agent1_result = cost_table
-                    logger.info(f"[Agent2] last_cost_table에서 직접 파싱 성공: {len(agent1_result)}개 항목")
-                except Exception as e:
-                    logger.error(f"[Agent2] last_cost_table JSON 파싱 실패: {e}")
-                    agent1_result = None
-        
-        # 2-2. inputText에서 Agent1 데이터 추출 (직접 호출된 경우)
-        if not agent1_result and 'inputText' in event:
+        # 2-1. inputText에서 Agent1 데이터 추출 (직접 호출된 경우)
+        if 'inputText' in event:
             input_text = event['inputText']
             logger.info(f"[Agent2] inputText에서 Agent1 데이터 추출 시도 (길이: {len(input_text)})")
             logger.info(f"[Agent2] inputText 내용 (처음 300자): {input_text[:300]}")
@@ -520,21 +483,24 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 for i, item in enumerate(agent1_result[:3]):  # 처음 3개만 로그
                     logger.info(f"[Agent2] 항목 {i+1}: {item.get('serviceName', 'N/A')} - ${item.get('usageFeeUSD', 0)} ({item.get('percentage', 0)}%)")
         
-        # 2-3. conversationHistory에서 보조 추출 (기존 방식)
+        # 2-2. conversationHistory에서 Agent1 데이터 추출 (백업)
         if not agent1_result and 'conversationHistory' in event:
             logger.info(f"[Agent2] conversationHistory에서 Agent1 데이터 추출 시도")
             ch = event['conversationHistory']
             if isinstance(ch, dict) and 'messages' in ch:
-                for msg in ch['messages']:
+                for msg in reversed(ch['messages']):
                     if msg.get('role') == 'assistant' and msg.get('content'):
-                        content = msg['content']
+                        content = msg.get('content', '')
                         if isinstance(content, list) and len(content) > 0:
                             content_text = content[0]
-                            logger.info(f"[Agent2] conversationHistory에서 assistant 메시지 발견 (길이: {len(content_text)})")
-                            agent1_result = parse_agent1_response_with_llm(content_text)
-                            if agent1_result:
-                                logger.info(f"[Agent2] conversationHistory에서 LLM 파싱 성공: {len(agent1_result)}개 항목")
-                                break
+                        else:
+                            content_text = str(content)
+                        
+                        logger.info(f"[Agent2] conversationHistory에서 assistant 메시지 발견 (길이: {len(content_text)})")
+                        agent1_result = parse_agent1_response_with_llm(content_text)
+                        if agent1_result:
+                            logger.info(f"[Agent2] conversationHistory에서 LLM 파싱 성공: {len(agent1_result)}개 항목")
+                            break
         
         # 3. 최종 검증 - Agent1 데이터가 없으면 Agent1을 직접 호출
         if not agent1_result:
@@ -567,7 +533,10 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                                     break
                 
                 if not user_input:
-                    user_input = "2025년 5월 태그별 사용량 조회"
+                    # 현재 날짜를 기반으로 기본값 설정
+                    from datetime import datetime
+                    current_date = datetime.now()
+                    user_input = f"{current_date.year}년 {current_date.month}월 서비스별 사용량 조회"
                 
                 logger.info(f'[Agent2] Agent1 호출 파라미터: sessionId={session_id}, inputText={user_input}')
                 

@@ -670,8 +670,10 @@ def summarize_invoice_items(invoice_items, billing_period):
         service = item.get('serviceName', '기타')
         val = item.get('usageFeeUSD', 0.0)
         service_sum[service] += val
-    top_services = sorted(service_sum.items(), key=lambda x: abs(x[1]), reverse=True)[:8]
-    etc = total - sum(x[1] for x in top_services)
+    
+    # 모든 서비스를 금액 순으로 정렬
+    all_services = sorted(service_sum.items(), key=lambda x: abs(x[1]), reverse=True)
+    
     # 월 정보가 YYYYMM 또는 YYYY-MM 형태면 YYYY년 MM월로 포맷
     month_fmt = billing_period
     if len(billing_period) == 6:
@@ -679,16 +681,18 @@ def summarize_invoice_items(invoice_items, billing_period):
     elif len(billing_period) == 7 and '-' in billing_period:
         y, m = billing_period.split('-')
         month_fmt = f"{y}년 {int(m):02d}월"
+    
     msg = f":bar_chart: **{month_fmt} 청구 총액: ${total:,.2f}**\n"
-    msg += "**주요 서비스별 청구 금액:**\n"
-    for name, val in top_services:
+    msg += "**모든 서비스별 청구 금액:**\n"
+    
+    # 모든 서비스를 개별적으로 표시
+    for i, (name, val) in enumerate(all_services, 1):
         percent = val / total * 100 if total else 0
-        msg += f"- **{name}**: ${val:,.2f} ({percent:.1f}%)\n"
-    if etc > 0:
-        msg += f"- **기타 서비스**: ${etc:,.2f} ({etc/total*100:.1f}%)\n"
+        msg += f"{i}. **{name}**: ${val:,.2f} ({percent:.1f}%)\n"
+    
     msg += "**주요 특징:**\n"
-    if top_services:
-        msg += f"- {top_services[0][0]}가 전체 청구 금액의 {top_services[0][1]/total*100:.1f}% 차지\n"
+    if all_services:
+        msg += f"- {all_services[0][0]}가 전체 청구 금액의 {all_services[0][1]/total*100:.1f}% 차지\n"
     msg += f"- 총 {len(invoice_items)}개 청구 항목\n"
     msg += "이 금액은 실제 결제 금액 기준의 최종 청구 내역을 포함합니다. 할인, 크레딧, RI, SP 등 모든 내역이 반영되어 있습니다."
     return msg
