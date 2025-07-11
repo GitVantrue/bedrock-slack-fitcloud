@@ -62,28 +62,46 @@ def lambda_handler(event, context):
     logger.info(f"[Supervisor] 사용자 입력: '{user_input}'")
     logger.info(f"[Supervisor] 보고서 요청 여부: {is_report_request}")
     
-    # Bedrock Agent Runtime 클라이언트
-    client = boto3.client("bedrock-agent-runtime")
+    # Lambda 클라이언트 (Agent1 직접 호출용)
+    lambda_client = boto3.client("lambda")
     
     if is_report_request:
         # 보고서 요청: Agent1 → Agent2 순서로 처리
         logger.info(f"[Supervisor] 보고서 요청 감지. Agent1 → Agent2 순서로 처리 시작")
         
         try:
-            # 1. Agent1 직접 호출 (동일한 sessionId 사용)
-            logger.info(f"[Supervisor] Agent1({AGENT1_ID}) 호출 시작")
-            agent1_response = client.invoke_agent(
-                agentId=AGENT1_ID,
-                agentAliasId=AGENT1_ALIAS,
-                sessionId=session_id,  # 동일한 sessionId 사용
-                inputText=user_input
+            # 1. Agent1 Lambda 직접 호출
+            logger.info(f"[Supervisor] Agent1 Lambda 직접 호출 시작")
+            agent1_lambda_name = "fitcloud_action_part1-wpfe6"  # Agent1 람다 함수명
+            
+            agent1_payload = {
+                "inputText": user_input,
+                "sessionId": session_id,
+                "sessionAttributes": event.get("sessionAttributes", {}),
+                "parameters": event.get("parameters", {}),
+                "requestBody": event.get("requestBody", {}),
+                "httpMethod": "POST",
+                "apiPath": "/costs/ondemand/corp/monthly"
+            }
+            
+            agent1_response = lambda_client.invoke(
+                FunctionName=agent1_lambda_name,
+                InvocationType='RequestResponse',
+                Payload=json.dumps(agent1_payload)
             )
             
-            # 1. Agent1 응답 chunk 이어붙이기
+            # 1. Agent1 Lambda 응답 처리
+            agent1_response_payload = json.loads(agent1_response['Payload'].read().decode('utf-8'))
+            logger.info(f"[Supervisor] Agent1 Lambda 응답 상태: {agent1_response['StatusCode']}")
+            
+            # Agent1 응답에서 실제 데이터 추출
             raw_agent1_response = ""
-            for event in agent1_response:
-                if 'chunk' in event and 'bytes' in event['chunk']:
-                    raw_agent1_response += event['chunk']['bytes'].decode('utf-8')
+            if 'response' in agent1_response_payload:
+                response_body = agent1_response_payload['response']
+                if 'body' in response_body and 'content' in response_body['body']:
+                    content = response_body['body']['content']
+                    if isinstance(content, list) and len(content) > 0:
+                        raw_agent1_response = content[0].get('text', '')
             
             # Agent1 원본 응답 로그 추가
             logger.info(f"[Supervisor] Agent1 원본 응답 (처음 500자): {raw_agent1_response[:500]}")
@@ -91,52 +109,19 @@ def lambda_handler(event, context):
             
             # Agent1 응답 검증
             if not raw_agent1_response or len(raw_agent1_response.strip()) == 0:
-                logger.error("[Supervisor] Agent1 응답이 비어있습니다. Agent1 재호출 시도...")
-                
-                # Agent1 재호출 (다른 방식으로)
-                try:
-                    agent1_retry_response = client.invoke_agent(
-                        agentId=AGENT1_ID,
-                        agentAliasId=AGENT1_ALIAS,
-                        sessionId=f"{session_id}-retry",
-                        inputText=user_input
-                    )
-                    
-                    raw_agent1_response = ""
-                    for event in agent1_retry_response:
-                        if 'chunk' in event and 'bytes' in event['chunk']:
-                            raw_agent1_response += event['chunk']['bytes'].decode('utf-8')
-                    
-                    logger.info(f"[Supervisor] Agent1 재호출 응답 길이: {len(raw_agent1_response)}")
-                    
-                    if not raw_agent1_response or len(raw_agent1_response.strip()) == 0:
-                        logger.error("[Supervisor] Agent1 재호출도 실패. Agent2 호출을 건너뜁니다.")
-                        return {
-                            'response': {
-                                'body': {
-                                    'content': [
-                                        {
-                                            'type': 'text',
-                                            'text': '❌ Agent1에서 데이터를 조회할 수 없습니다. 잠시 후 다시 시도해주세요.'
-                                        }
-                                    ]
+                logger.error("[Supervisor] Agent1 응답이 비어있습니다.")
+                return {
+                    'response': {
+                        'body': {
+                            'content': [
+                                {
+                                    'type': 'text',
+                                    'text': '❌ Agent1에서 데이터를 조회할 수 없습니다. 잠시 후 다시 시도해주세요.'
                                 }
-                            }
-                        }
-                except Exception as retry_e:
-                    logger.error(f"[Supervisor] Agent1 재호출 실패: {retry_e}")
-                    return {
-                        'response': {
-                            'body': {
-                                'content': [
-                                    {
-                                        'type': 'text',
-                                        'text': f'❌ Agent1 호출 중 오류가 발생했습니다: {str(retry_e)}'
-                                    }
-                                ]
-                            }
+                            ]
                         }
                     }
+                }
             
             # 2. 마크다운 텍스트만 추출 (JSON 파싱 우선)
             agent1_result_text = extract_markdown_from_agent1(raw_agent1_response)
@@ -149,21 +134,45 @@ def lambda_handler(event, context):
             logger.info(f"[Supervisor] Agent2 호출 시 sessionId: {session_id}")
             
             try:
-                agent2_response = client.invoke_agent(
-                    agentId=AGENT2_ID,
-                    agentAliasId=AGENT2_ALIAS,
-                    sessionId=session_id,  # 동일한 sessionId 사용
-                    inputText=agent2_input_text,
-                    sessionState={
-                        "sessionAttributes": {
-                            "agent1_response": agent1_result_text,
-                            "agent1_raw_response": raw_agent1_response,
-                            "supervisor_session": "true",
-                            "report_request": "true"
-                        }
-                    }
+                # Agent2 Lambda 직접 호출
+                agent2_lambda_name = "fitcloud_action_part2-wpfe6"  # Agent2 람다 함수명
+                
+                agent2_payload = {
+                    "inputText": agent2_input_text,
+                    "sessionId": session_id,
+                    "sessionAttributes": {
+                        "agent1_response": agent1_result_text,
+                        "agent1_raw_response": raw_agent1_response,
+                        "supervisor_session": "true",
+                        "report_request": "true"
+                    },
+                    "parameters": event.get("parameters", {}),
+                    "requestBody": event.get("requestBody", {})
+                }
+                
+                agent2_response = lambda_client.invoke(
+                    FunctionName=agent2_lambda_name,
+                    InvocationType='RequestResponse',
+                    Payload=json.dumps(agent2_payload)
                 )
-                logger.info(f"[Supervisor] Agent2 호출 성공")
+                logger.info(f"[Supervisor] Agent2 Lambda 호출 성공")
+                
+                # Agent2 응답 처리
+                agent2_response_payload = json.loads(agent2_response['Payload'].read().decode('utf-8'))
+                logger.info(f"[Supervisor] Agent2 Lambda 응답 상태: {agent2_response['StatusCode']}")
+                
+                agent2_result = ""
+                if 'response' in agent2_response_payload:
+                    response_body = agent2_response_payload['response']
+                    if 'body' in response_body and 'content' in response_body['body']:
+                        content = response_body['body']['content']
+                        if isinstance(content, list) and len(content) > 0:
+                            agent2_result = content[0].get('text', '')
+                
+                if not agent2_result:
+                    agent2_result = "[Supervisor] Agent2로부터 유효한 응답을 받지 못했습니다."
+                logger.info(f"[Supervisor] Agent2 최종 응답: {agent2_result[:300]}")
+                
             except Exception as agent2_e:
                 logger.error(f"[Supervisor] Agent2 호출 실패: {agent2_e}")
                 return {
@@ -178,17 +187,6 @@ def lambda_handler(event, context):
                         }
                     }
                 }
-            agent2_result = ""
-            try:
-                for event in agent2_response:
-                    if 'chunk' in event and 'bytes' in event['chunk']:
-                        agent2_result += event['chunk']['bytes'].decode('utf-8')
-            except Exception as e:
-                logger.error(f"Agent2 EventStream 파싱 실패: {e}")
-                agent2_result = f"Agent2 호출 실패: {str(e)}"
-            if not agent2_result:
-                agent2_result = "[Supervisor] Agent2로부터 유효한 응답을 받지 못했습니다."
-            logger.info(f"[Supervisor] Agent2 최종 응답: {agent2_result[:300]}")
             
             # 최종 응답 반환
             return {
@@ -228,20 +226,38 @@ def lambda_handler(event, context):
         logger.info(f"[Supervisor] 단순 조회 요청 감지. Agent1만 호출")
         
         try:
-            # Agent1 직접 호출
-            logger.info(f"[Supervisor] Agent1({AGENT1_ID}) 호출 시작")
-            agent1_response = client.invoke_agent(
-                agentId=AGENT1_ID,
-                agentAliasId=AGENT1_ALIAS,
-                sessionId=session_id,  # 동일한 sessionId 사용
-                inputText=user_input
+            # Agent1 Lambda 직접 호출
+            logger.info(f"[Supervisor] Agent1 Lambda 직접 호출 시작")
+            agent1_lambda_name = "fitcloud_action_part1-wpfe6"  # Agent1 람다 함수명
+            
+            agent1_payload = {
+                "inputText": user_input,
+                "sessionId": session_id,
+                "sessionAttributes": event.get("sessionAttributes", {}),
+                "parameters": event.get("parameters", {}),
+                "requestBody": event.get("requestBody", {}),
+                "httpMethod": "POST",
+                "apiPath": "/costs/ondemand/corp/monthly"
+            }
+            
+            agent1_response = lambda_client.invoke(
+                FunctionName=agent1_lambda_name,
+                InvocationType='RequestResponse',
+                Payload=json.dumps(agent1_payload)
             )
             
-            # Agent1 응답 처리
+            # Agent1 Lambda 응답 처리
+            agent1_response_payload = json.loads(agent1_response['Payload'].read().decode('utf-8'))
+            logger.info(f"[Supervisor] Agent1 Lambda 응답 상태: {agent1_response['StatusCode']}")
+            
+            # Agent1 응답에서 실제 데이터 추출
             raw_agent1_response = ""
-            for event in agent1_response:
-                if 'chunk' in event and 'bytes' in event['chunk']:
-                    raw_agent1_response += event['chunk']['bytes'].decode('utf-8')
+            if 'response' in agent1_response_payload:
+                response_body = agent1_response_payload['response']
+                if 'body' in response_body and 'content' in response_body['body']:
+                    content = response_body['body']['content']
+                    if isinstance(content, list) and len(content) > 0:
+                        raw_agent1_response = content[0].get('text', '')
             
             logger.info(f"[Supervisor] Agent1 원본 응답 (처음 500자): {raw_agent1_response[:500]}")
             logger.info(f"[Supervisor] Agent1 원본 응답 길이: {len(raw_agent1_response)}")
