@@ -909,6 +909,14 @@ def extract_parameters(event):
     if not params.get('billingPeriodDaily') and params.get('from') and len(str(params['from'])) == 8:
         params['billingPeriodDaily'] = str(params['from'])
     
+    # billingPeriod가 있지만 from/to가 없는 경우, from/to로 변환
+    if params.get('billingPeriod') and not params.get('from') and not params.get('to'):
+        billing_period = str(params['billingPeriod'])
+        if len(billing_period) == 6:  # YYYYMM 형식
+            params['from'] = billing_period
+            params['to'] = billing_period
+            print(f"📅 billingPeriod를 from/to로 변환: {billing_period} → from={params['from']}, to={params['to']}")
+    
     return params
 
 # --- 주요 처리 함수들을 lambda_handler 위로 이동 ---
