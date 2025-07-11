@@ -36,6 +36,8 @@ def parse_agent1_response_with_llm(input_text: str) -> list:
     LLM을 사용해서 Agent1의 응답을 구조화된 데이터로 변환합니다.
     """
     try:
+        logger.info(f"[Agent2] LLM 파싱 시작 - 입력 길이: {len(input_text)}")
+        
         # 이스케이프 문자 처리
         try:
             decoded_text = codecs.decode(input_text, 'unicode_escape')
@@ -76,6 +78,8 @@ def parse_agent1_response_with_llm(input_text: str) -> list:
 ]
 """
 
+        logger.info(f"[Agent2] Bedrock LLM 호출 시작")
+        
         # Bedrock LLM 호출
         response = bedrock_client.invoke_model(
             modelId='anthropic.claude-3-sonnet-20240229-v1:0',
@@ -91,21 +95,32 @@ def parse_agent1_response_with_llm(input_text: str) -> list:
             })
         )
         
+        logger.info(f"[Agent2] Bedrock LLM 응답 수신")
+        
         response_body = json.loads(response['body'].read())
         llm_response = response_body['content'][0]['text']
         logger.info(f"[Agent2] LLM 응답 (처음 300자): {llm_response[:300]}")
+        logger.info(f"[Agent2] LLM 응답 전체 길이: {len(llm_response)}")
         
         # JSON 파싱
         try:
             # JSON 코드블록이 있으면 추출
             json_match = re.search(r'```json\s*(\[.*?\])\s*```', llm_response, re.DOTALL)
             if json_match:
-                parsed_data = json.loads(json_match.group(1))
+                json_str = json_match.group(1)
+                logger.info(f"[Agent2] JSON 코드블록 추출 성공 (길이: {len(json_str)})")
+                parsed_data = json.loads(json_str)
             else:
                 # 직접 JSON 파싱 시도
+                logger.info(f"[Agent2] 직접 JSON 파싱 시도")
                 parsed_data = json.loads(llm_response)
             
             logger.info(f"[Agent2] LLM 파싱 성공: {len(parsed_data)}개 항목")
+            
+            # 파싱된 데이터 로그
+            for i, item in enumerate(parsed_data[:3]):  # 처음 3개만 로그
+                logger.info(f"[Agent2] 파싱된 항목 {i+1}: {item}")
+            
             return parsed_data
             
         except json.JSONDecodeError as e:
@@ -337,36 +352,12 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     4. 결과 반환
     """
     try:
-        logger.info(f"[Agent2] event 구조: {json.dumps(event, ensure_ascii=False)}")
+        logger.info(f"[Agent2] Agent2 람다 시작")
         
-        # === conversationHistory와 sessionAttributes 디버깅 로그 추가 ===
-        logger.info(f"[DEBUG][Agent2] conversationHistory 존재 여부: {'conversationHistory' in event}")
-        if 'conversationHistory' in event:
-            conversation_history = event['conversationHistory']
-            logger.info(f"[DEBUG][Agent2] conversationHistory 타입: {type(conversation_history)}")
-            logger.info(f"[DEBUG][Agent2] conversationHistory 내용: {json.dumps(conversation_history, ensure_ascii=False)[:500]}")
-            if isinstance(conversation_history, dict) and 'messages' in conversation_history:
-                logger.info(f"[DEBUG][Agent2] conversationHistory 메시지 수: {len(conversation_history['messages'])}")
-                for i, msg in enumerate(conversation_history['messages']):
-                    logger.info(f"[DEBUG][Agent2] 메시지 {i}: role={msg.get('role')}, content 길이={len(str(msg.get('content', '')))}")
-        else:
-            logger.info(f"[DEBUG][Agent2] conversationHistory가 event에 없습니다.")
-        
-        logger.info(f"[DEBUG][Agent2] sessionAttributes 존재 여부: {'sessionAttributes' in event}")
-        if 'sessionAttributes' in event:
-            session_attrs = event['sessionAttributes']
-            logger.info(f"[DEBUG][Agent2] sessionAttributes 타입: {type(session_attrs)}")
-            logger.info(f"[DEBUG][Agent2] sessionAttributes 키 목록: {list(session_attrs.keys())}")
-            logger.info(f"[DEBUG][Agent2] sessionAttributes 내용: {json.dumps(session_attrs, ensure_ascii=False)[:500]}")
-        else:
-            logger.info(f"[DEBUG][Agent2] sessionAttributes가 event에 없습니다.")
-        
-        # 1. 파라미터 추출 (event 구조에 따라 보강)
+        # 1. 파라미터 추출
         params = None
-        # 1-1. parameters가 dict로 들어오는 경우
         if isinstance(event.get("parameters"), dict):
             params = event["parameters"]
-        # 1-2. parameters가 list이거나 없을 때, requestBody에서 추출
         if not params:
             try:
                 props = event["requestBody"]["content"]["application/json"]["properties"]
@@ -376,7 +367,6 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         break
             except Exception as e:
                 logger.error(f"user_input 추출 실패: {e}")
-        # 1-3. 그래도 없으면 inputText 등 다른 필드 시도
         if not params:
             params = event.get("user_input") or event.get("inputText") or event
         if isinstance(params, str):
@@ -386,68 +376,44 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 params = {"user_input": params}
         logger.info(f"[Agent2] 입력 파라미터: {params}")
 
-        # Agent1 결과 추출 로직 보강 (sessionAttributes 우선)
+        # 2. Agent1 데이터 추출
         agent1_result = None
-        logger.info(f"[Agent2] sessionAttributes에서 Agent1 데이터 추출 시도")
         
-        # 1. sessionAttributes에서 우선 추출 (슈퍼바이저가 전달한 데이터)
+        # 2-1. sessionAttributes에서 Agent1 데이터 추출 (슈퍼바이저가 전달한 데이터)
         if 'sessionAttributes' in event and isinstance(event['sessionAttributes'], dict):
             sa = event['sessionAttributes']
-            logger.info(f"[Agent2] sessionAttributes 키 목록: {list(sa.keys())}")
+            logger.info(f"[Agent2] sessionAttributes 키: {list(sa.keys())}")
             
-            # 슈퍼바이저가 전달한 Agent1 응답 확인
             if 'agent1_response' in sa:
                 agent1_response_text = sa['agent1_response']
                 logger.info(f"[Agent2] sessionAttributes에서 agent1_response 발견 (길이: {len(agent1_response_text)})")
                 
-                # Agent1 응답에서 JSON 데이터 추출
-                try:
-                    # 마크다운 내 JSON 코드블록 파싱
-                    json_match = re.search(r'```json\s*(\[.*?\])\s*```', agent1_response_text, re.DOTALL)
-                    if json_match:
-                        agent1_result = json.loads(json_match.group(1))
-                        logger.info(f"[Agent2] JSON 코드블록에서 데이터 추출 성공 (레코드 수: {len(agent1_result)})")
-                    else:
-                        # 일반 JSON 파싱 시도
-                        agent1_result = json.loads(agent1_response_text)
-                        logger.info(f"[Agent2] 일반 JSON 파싱 성공 (레코드 수: {len(agent1_result)})")
-                except json.JSONDecodeError as e:
-                    logger.warning(f"[Agent2] JSON 파싱 실패: {e}")
-                    # JSON 파싱 실패 시 텍스트 그대로 사용 (Agent1이 텍스트로 응답한 경우)
-                    agent1_result = agent1_response_text
-                    logger.info(f"[Agent2] JSON 파싱 실패로 텍스트 그대로 사용")
+                # LLM을 사용해서 Agent1 응답 파싱
+                agent1_result = parse_agent1_response_with_llm(agent1_response_text)
+                if agent1_result:
+                    logger.info(f"[Agent2] sessionAttributes에서 LLM 파싱 성공: {len(agent1_result)}개 항목")
             
             elif 'agent1_raw_response' in sa:
-                # 원본 응답에서도 시도
                 raw_response = sa['agent1_raw_response']
                 logger.info(f"[Agent2] agent1_raw_response 발견 (길이: {len(raw_response)})")
-                try:
-                    json_match = re.search(r'```json\s*(\[.*?\])\s*```', raw_response, re.DOTALL)
-                    if json_match:
-                        agent1_result = json.loads(json_match.group(1))
-                        logger.info(f"[Agent2] raw_response에서 JSON 추출 성공")
-                except Exception as e:
-                    logger.warning(f"[Agent2] raw_response 파싱 실패: {e}")
+                agent1_result = parse_agent1_response_with_llm(raw_response)
+                if agent1_result:
+                    logger.info(f"[Agent2] raw_response에서 LLM 파싱 성공: {len(agent1_result)}개 항목")
         
-        # 2. inputText에서 Agent1 데이터 추출 (직접 호출된 경우)
+        # 2-2. inputText에서 Agent1 데이터 추출 (직접 호출된 경우)
         if not agent1_result and 'inputText' in event:
             input_text = event['inputText']
             logger.info(f"[Agent2] inputText에서 Agent1 데이터 추출 시도 (길이: {len(input_text)})")
-            logger.info(f"[Agent2] inputText 내용 (처음 500자): {input_text[:500]}")
+            logger.info(f"[Agent2] inputText 내용 (처음 300자): {input_text[:300]}")
             
             # LLM을 사용해서 Agent1 응답 파싱
-            logger.info(f"[Agent2] LLM을 사용한 Agent1 응답 파싱 시작")
             agent1_result = parse_agent1_response_with_llm(input_text)
-            
             if agent1_result:
-                logger.info(f"[Agent2] LLM 파싱 성공: {len(agent1_result)}개 항목")
+                logger.info(f"[Agent2] inputText에서 LLM 파싱 성공: {len(agent1_result)}개 항목")
                 for i, item in enumerate(agent1_result[:3]):  # 처음 3개만 로그
                     logger.info(f"[Agent2] 항목 {i+1}: {item.get('serviceName', 'N/A')} - ${item.get('usageFeeUSD', 0)} ({item.get('percentage', 0)}%)")
-            else:
-                logger.warning(f"[Agent2] LLM 파싱 실패 - 빈 결과")
-                logger.info(f"[Agent2] inputText 전체 내용: {input_text}")
         
-        # 3. conversationHistory에서 보조 추출 (기존 방식)
+        # 2-3. conversationHistory에서 보조 추출 (기존 방식)
         if not agent1_result and 'conversationHistory' in event:
             logger.info(f"[Agent2] conversationHistory에서 Agent1 데이터 추출 시도")
             ch = event['conversationHistory']
@@ -458,19 +424,14 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         if isinstance(content, list) and len(content) > 0:
                             content_text = content[0]
                             logger.info(f"[Agent2] conversationHistory에서 assistant 메시지 발견 (길이: {len(content_text)})")
-                            try:
-                                # JSON 파싱 시도
-                                agent1_result = json.loads(content_text)
-                                logger.info(f"[Agent2] conversationHistory에서 JSON 파싱 성공")
+                            agent1_result = parse_agent1_response_with_llm(content_text)
+                            if agent1_result:
+                                logger.info(f"[Agent2] conversationHistory에서 LLM 파싱 성공: {len(agent1_result)}개 항목")
                                 break
-                            except json.JSONDecodeError:
-                                logger.warning(f"[Agent2] conversationHistory JSON 파싱 실패")
         
         # 3. 최종 검증
         if not agent1_result:
             logger.error('[Agent2] Agent1의 데이터를 찾을 수 없습니다.')
-            logger.error(f"[Agent2] sessionAttributes 키: {list(event.get('sessionAttributes', {}).keys())}")
-            logger.error(f"[Agent2] conversationHistory 존재: {'conversationHistory' in event}")
             return {
                 'response': {
                     'body': {
@@ -486,15 +447,13 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         
         logger.info(f"[Agent2] Agent1 데이터 추출 완료 - 타입: {type(agent1_result)}, 길이: {len(agent1_result) if isinstance(agent1_result, list) else 'N/A'}")
 
-        # 데이터 검증
+        # 4. 데이터 검증
         if not agent1_result:
             logger.error(f"[Agent2] Agent1 데이터가 없습니다")
             raise ValueError("Agent1의 데이터가 없습니다. 먼저 비용/사용량을 조회해주세요.")
         
-        # 리스트 형태가 아닌 경우 처리 (텍스트 응답인 경우)
         if not isinstance(agent1_result, list):
             logger.warning(f"[Agent2] Agent1 응답이 리스트가 아님: {type(agent1_result)}")
-            # 텍스트 응답인 경우 빈 리스트로 처리
             agent1_result = []
         
         if len(agent1_result) == 0:
@@ -514,7 +473,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         logger.info(f"[Agent2] 데이터 검증 완료, 레코드 수: {len(agent1_result)}")
 
-        # 3. 엑셀 보고서 생성 및 슬랙 업로드
+        # 5. 엑셀 보고서 생성 및 슬랙 업로드
         logger.info(f"[Agent2] 엑셀 보고서 생성 시작")
         try:
             upload_result = generate_excel_report(agent1_result)
@@ -525,7 +484,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             logger.error(f"[Agent2] 엑셀 생성 실패 상세: {traceback.format_exc()}")
             raise
 
-        # 4. 결과 반환
+        # 6. 결과 반환
         completion_msg = (
             f"📊 **{upload_result.get('report_title', '리포트')} 생성 완료!**\n"
             f"✅ 엑셀 파일이 슬랙 채널에 업로드되었습니다.\n"
@@ -536,7 +495,6 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         
         logger.info(f"[Agent2] 처리 완료")
         
-        # AWS Bedrock Agent 응답 형식으로 반환
         return {
             'response': {
                 'body': {
