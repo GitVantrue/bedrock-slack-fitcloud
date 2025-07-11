@@ -204,7 +204,7 @@ def generate_excel_report(data):
     # inputText에서 추출한 가상 데이터 구조 처리 (새로 추가)
     if 'percentage' in first and 'billingPeriod' in first:
         ws_title = "서비스별 요금 리포트"
-        headers = ['순위', '서비스명', '요금(USD)', '비율(%)']
+        headers = ['순위', '서비스명', '요금($)', '비율(%)']
         rows = []
         for i, item in enumerate(records, 1):
             rows.append([
@@ -219,7 +219,7 @@ def generate_excel_report(data):
     # 월별 요금
     elif 'billingPeriod' in first:
         ws_title = "월별 요금 리포트"
-        headers = ['월', '요금(USD)']
+        headers = ['월', '요금($)']
         months = [item['billingPeriod'] for item in records]
         costs = [float(item.get('usageFee', item.get('usageFeeUSD', 0))) for item in records]
         rows = list(zip(months, costs))
@@ -229,7 +229,7 @@ def generate_excel_report(data):
     # 일별 요금
     elif 'date' in first or 'dailyDate' in first:
         ws_title = "일별 요금 리포트"
-        headers = ['일', '요금(USD)']
+        headers = ['일', '요금($)']
         days = [item.get('date', item.get('dailyDate')) for item in records]
         costs = [float(item.get('usageFee', item.get('usageFeeUSD', 0))) for item in records]
         rows = list(zip(days, costs))
@@ -239,7 +239,7 @@ def generate_excel_report(data):
     # 계정별 요금
     elif 'accountId' in first:
         ws_title = "계정별 요금 리포트"
-        headers = ['계정ID', '요금(USD)']
+        headers = ['계정ID', '요금($)']
         accounts = [item['accountId'] for item in records]
         costs = [float(item.get('usageFee', item.get('usageFeeUSD', 0))) for item in records]
         rows = list(zip(accounts, costs))
@@ -249,7 +249,7 @@ def generate_excel_report(data):
     # 태그별 요금 등 기타 케이스(확장 가능) - app.py와 동일한 주석
     elif 'tagsJson' in first:
         ws_title = "태그별 요금 리포트"
-        headers = ['태그', '요금(USD)']
+        headers = ['태그', '요금($)']
         tags = []
         costs = []
         for item in records:
@@ -271,6 +271,38 @@ def generate_excel_report(data):
     ws.append(headers)
     for row in rows:
         ws.append(row)
+    
+    # 금액 컬럼에 통화 형식 적용
+    if 'percentage' in first and 'billingPeriod' in first:
+        # 서비스별 요금 리포트인 경우 3번째 컬럼(요금)에 통화 형식 적용
+        for row_num in range(2, len(rows) + 2):  # 헤더 다음 행부터
+            cell = ws.cell(row=row_num, column=3)  # 3번째 컬럼 (요금)
+            if isinstance(cell.value, (int, float)):
+                cell.number_format = '$#,##0.00'
+    elif 'billingPeriod' in first:
+        # 월별 요금 리포트인 경우 2번째 컬럼(요금)에 통화 형식 적용
+        for row_num in range(2, len(rows) + 2):
+            cell = ws.cell(row=row_num, column=2)  # 2번째 컬럼 (요금)
+            if isinstance(cell.value, (int, float)):
+                cell.number_format = '$#,##0.00'
+    elif 'date' in first or 'dailyDate' in first:
+        # 일별 요금 리포트인 경우 2번째 컬럼(요금)에 통화 형식 적용
+        for row_num in range(2, len(rows) + 2):
+            cell = ws.cell(row=row_num, column=2)  # 2번째 컬럼 (요금)
+            if isinstance(cell.value, (int, float)):
+                cell.number_format = '$#,##0.00'
+    elif 'accountId' in first:
+        # 계정별 요금 리포트인 경우 2번째 컬럼(요금)에 통화 형식 적용
+        for row_num in range(2, len(rows) + 2):
+            cell = ws.cell(row=row_num, column=2)  # 2번째 컬럼 (요금)
+            if isinstance(cell.value, (int, float)):
+                cell.number_format = '$#,##0.00'
+    elif 'tagsJson' in first:
+        # 태그별 요금 리포트인 경우 2번째 컬럼(요금)에 통화 형식 적용
+        for row_num in range(2, len(rows) + 2):
+            cell = ws.cell(row=row_num, column=2)  # 2번째 컬럼 (요금)
+            if isinstance(cell.value, (int, float)):
+                cell.number_format = '$#,##0.00'
 
     # 차트 추가 (가능한 경우만) - app.py와 동일한 로직
     if not chart and len(rows) > 0 and len(headers) >= 2:
