@@ -823,10 +823,42 @@ def extract_parameters(event):
     # inputText에서 월/일 정보 추출
     input_text = event.get('inputText', '')
     import re
+    
+    # 계정명 추출 및 accountId 변환
+    account_name_patterns = [
+        r'([가-힣a-zA-Z0-9]+계정)',  # 티켓계정, dev계정 등
+        r'계정[:\s]*([가-힣a-zA-Z0-9]+)',  # 계정: 티켓
+        r'([가-힣a-zA-Z0-9]+)의',  # 티켓의 인보이스
+    ]
+    
+    account_name = None
+    for pattern in account_name_patterns:
+        match = re.search(pattern, input_text)
+        if match:
+            account_name = match.group(1)
+            print(f"📋 inputText에서 계정명 추출: {account_name}")
+            break
+    
+    # 계정명이 있으면 sessionAttributes에서 계정 목록 확인
+    if account_name and 'sessionAttributes' in event:
+        session_attrs = event['sessionAttributes']
+        if 'available_accounts' in session_attrs:
+            try:
+                available_accounts = json.loads(session_attrs['available_accounts'])
+                for account in available_accounts:
+                    if account.get('accountName') == account_name:
+                        params['accountId'] = account.get('accountId')
+                        print(f"📋 계정명 '{account_name}'을 accountId '{params['accountId']}'로 변환")
+                        break
+            except Exception as e:
+                print(f"📋 계정 목록 파싱 실패: {e}")
+    
     # 일자 범위(1~5일 등) 추출
     day_range_match = re.search(r'([0-9]{1,2})[일\.]?\s*~\s*([0-9]{1,2})[일\.]?', input_text)
     month_match = re.search(r'([0-9]{1,2})월', input_text)
+    year_month_match = re.search(r'(\d{4})년\s*(\d{1,2})월', input_text)  # 2025년 5월 형식
     api_path = event.get('apiPath', '')
+    
     if month_match and day_range_match:
         # ex: 5월 1~5일 → from: 20250501, to: 20250505
         month_str = month_match.group(1).zfill(2)
@@ -842,6 +874,18 @@ def extract_parameters(event):
             params['from'] = yyyymmdd_from
             params['to'] = yyyymmdd_to
             print(f"📅 inputText에서 일자 범위 추출: from={params['from']}, to={params['to']}")
+    elif year_month_match:
+        # 2025년 5월 형식 처리
+        year = year_month_match.group(1)
+        month = year_month_match.group(2).zfill(2)
+        yyyymm = f"{year}{month}"
+        if api_path.startswith('/costs/ondemand/') or api_path.startswith('/usage/ondemand/'):
+            params['from'] = yyyymm
+            params['to'] = yyyymm
+            print(f"📅 inputText에서 연월 추출(비용/온디맨드API): from={params['from']}, to={params['to']}")
+        elif api_path.startswith('/invoice/'):
+            params['billingPeriod'] = yyyymm
+            print(f"📅 inputText에서 연월 추출(인보이스API): billingPeriod={params['billingPeriod']}")
     elif month_match:
         month_str = month_match.group(1).zfill(2)
         if api_path.startswith('/costs/ondemand/') or api_path.startswith('/usage/ondemand/'):
@@ -1028,6 +1072,12 @@ def lambda_handler(event, context):
     is_daily = len(from_str) == 8 and from_str.isdigit() and len(to_str) == 8 and to_str.isdigit()
     is_monthly = len(from_str) == 6 and from_str.isdigit() and len(to_str) == 6 and to_str.isdigit()
     
+    # API 경로 우선순위: 실제 요청 내용 > event의 apiPath
+    # event의 apiPath가 /accounts이지만 실제 요청이 인보이스인 경우 인보이스 API로 분기
+    if api_path_from_event == '/accounts' and (is_invoice_request or is_usage_request or is_tag_usage):
+        print(f"[DEBUG] API 경로가 /accounts이지만 실제 요청에 따라 다른 API로 분기")
+        api_path_from_event = ''  # API 경로 무시하고 실제 요청에 따라 분기
+    
     # 태그별 usage API
     if 'beginDate' in params and 'endDate' in params:
         target_api_path = '/usage/ondemand/tags'
@@ -1057,6 +1107,11 @@ def lambda_handler(event, context):
             target_api_path = '/usage/ondemand/monthly'
             api_type = 'usage_monthly'
         print(f"[DEBUG] usage API 분기: {target_api_path}")
+    elif api_path_from_event == '/accounts':
+        # 계정 목록 조회
+        target_api_path = '/accounts'
+        api_type = 'accounts'
+        print(f"[DEBUG] 계정 목록 API 분기: {target_api_path}")
     else:
         # 일반 비용/사용량(costs API)
         if is_daily:
