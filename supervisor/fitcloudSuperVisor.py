@@ -62,46 +62,28 @@ def lambda_handler(event, context):
     logger.info(f"[Supervisor] 사용자 입력: '{user_input}'")
     logger.info(f"[Supervisor] 보고서 요청 여부: {is_report_request}")
     
-    # Lambda 클라이언트 (Agent1 직접 호출용)
-    lambda_client = boto3.client("lambda")
+    # Bedrock Agent Runtime 클라이언트
+    client = boto3.client("bedrock-agent-runtime")
     
     if is_report_request:
         # 보고서 요청: Agent1 → Agent2 순서로 처리
         logger.info(f"[Supervisor] 보고서 요청 감지. Agent1 → Agent2 순서로 처리 시작")
         
         try:
-            # 1. Agent1 Lambda 직접 호출
-            logger.info(f"[Supervisor] Agent1 Lambda 직접 호출 시작")
-            agent1_lambda_name = "fitcloud_action_part1-wpfe6"  # Agent1 람다 함수명
-            
-            agent1_payload = {
-                "inputText": user_input,
-                "sessionId": session_id,
-                "sessionAttributes": event.get("sessionAttributes", {}),
-                "parameters": event.get("parameters", {}),
-                "requestBody": event.get("requestBody", {}),
-                "httpMethod": "POST",
-                "apiPath": "/costs/ondemand/corp/monthly"
-            }
-            
-            agent1_response = lambda_client.invoke(
-                FunctionName=agent1_lambda_name,
-                InvocationType='RequestResponse',
-                Payload=json.dumps(agent1_payload)
+            # 1. Agent1 직접 호출 (동일한 sessionId 사용)
+            logger.info(f"[Supervisor] Agent1({AGENT1_ID}) 호출 시작")
+            agent1_response = client.invoke_agent(
+                agentId=AGENT1_ID,
+                agentAliasId=AGENT1_ALIAS,
+                sessionId=session_id,  # 동일한 sessionId 사용
+                inputText=user_input
             )
             
-            # 1. Agent1 Lambda 응답 처리
-            agent1_response_payload = json.loads(agent1_response['Payload'].read().decode('utf-8'))
-            logger.info(f"[Supervisor] Agent1 Lambda 응답 상태: {agent1_response['StatusCode']}")
-            
-            # Agent1 응답에서 실제 데이터 추출
+            # 1. Agent1 응답 chunk 이어붙이기
             raw_agent1_response = ""
-            if 'response' in agent1_response_payload:
-                response_body = agent1_response_payload['response']
-                if 'body' in response_body and 'content' in response_body['body']:
-                    content = response_body['body']['content']
-                    if isinstance(content, list) and len(content) > 0:
-                        raw_agent1_response = content[0].get('text', '')
+            for event in agent1_response:
+                if 'chunk' in event and 'bytes' in event['chunk']:
+                    raw_agent1_response += event['chunk']['bytes'].decode('utf-8')
             
             # Agent1 원본 응답 로그 추가
             logger.info(f"[Supervisor] Agent1 원본 응답 (처음 500자): {raw_agent1_response[:500]}")
