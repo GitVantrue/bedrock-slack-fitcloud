@@ -89,6 +89,55 @@ def lambda_handler(event, context):
             logger.info(f"[Supervisor] Agent1 원본 응답 (처음 500자): {raw_agent1_response[:500]}")
             logger.info(f"[Supervisor] Agent1 원본 응답 길이: {len(raw_agent1_response)}")
             
+            # Agent1 응답 검증
+            if not raw_agent1_response or len(raw_agent1_response.strip()) == 0:
+                logger.error("[Supervisor] Agent1 응답이 비어있습니다. Agent1 재호출 시도...")
+                
+                # Agent1 재호출 (다른 방식으로)
+                try:
+                    agent1_retry_response = client.invoke_agent(
+                        agentId=AGENT1_ID,
+                        agentAliasId=AGENT1_ALIAS,
+                        sessionId=f"{session_id}-retry",
+                        inputText=user_input
+                    )
+                    
+                    raw_agent1_response = ""
+                    for event in agent1_retry_response:
+                        if 'chunk' in event and 'bytes' in event['chunk']:
+                            raw_agent1_response += event['chunk']['bytes'].decode('utf-8')
+                    
+                    logger.info(f"[Supervisor] Agent1 재호출 응답 길이: {len(raw_agent1_response)}")
+                    
+                    if not raw_agent1_response or len(raw_agent1_response.strip()) == 0:
+                        logger.error("[Supervisor] Agent1 재호출도 실패. Agent2 호출을 건너뜁니다.")
+                        return {
+                            'response': {
+                                'body': {
+                                    'content': [
+                                        {
+                                            'type': 'text',
+                                            'text': '❌ Agent1에서 데이터를 조회할 수 없습니다. 잠시 후 다시 시도해주세요.'
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                except Exception as retry_e:
+                    logger.error(f"[Supervisor] Agent1 재호출 실패: {retry_e}")
+                    return {
+                        'response': {
+                            'body': {
+                                'content': [
+                                    {
+                                        'type': 'text',
+                                        'text': f'❌ Agent1 호출 중 오류가 발생했습니다: {str(retry_e)}'
+                                    }
+                                ]
+                            }
+                        }
+                    }
+            
             # 2. 마크다운 텍스트만 추출 (JSON 파싱 우선)
             agent1_result_text = extract_markdown_from_agent1(raw_agent1_response)
             logger.info(f"[Supervisor] Agent1 추출된 텍스트 (처음 300자): {agent1_result_text[:300]}")
@@ -99,20 +148,36 @@ def lambda_handler(event, context):
             logger.info(f"[Supervisor] Agent2 호출용 inputText: {agent2_input_text[:300]}")
             logger.info(f"[Supervisor] Agent2 호출 시 sessionId: {session_id}")
             
-            agent2_response = client.invoke_agent(
-                agentId=AGENT2_ID,
-                agentAliasId=AGENT2_ALIAS,
-                sessionId=session_id,  # 동일한 sessionId 사용
-                inputText=agent2_input_text,
-                sessionState={
-                    "sessionAttributes": {
-                        "agent1_response": agent1_result_text,
-                        "agent1_raw_response": raw_agent1_response,
-                        "supervisor_session": "true",
-                        "report_request": "true"
+            try:
+                agent2_response = client.invoke_agent(
+                    agentId=AGENT2_ID,
+                    agentAliasId=AGENT2_ALIAS,
+                    sessionId=session_id,  # 동일한 sessionId 사용
+                    inputText=agent2_input_text,
+                    sessionState={
+                        "sessionAttributes": {
+                            "agent1_response": agent1_result_text,
+                            "agent1_raw_response": raw_agent1_response,
+                            "supervisor_session": "true",
+                            "report_request": "true"
+                        }
+                    }
+                )
+                logger.info(f"[Supervisor] Agent2 호출 성공")
+            except Exception as agent2_e:
+                logger.error(f"[Supervisor] Agent2 호출 실패: {agent2_e}")
+                return {
+                    'response': {
+                        'body': {
+                            'content': [
+                                {
+                                    'type': 'text',
+                                    'text': f'❌ Agent2 호출 중 오류가 발생했습니다: {str(agent2_e)}'
+                                }
+                            ]
+                        }
                     }
                 }
-            )
             agent2_result = ""
             try:
                 for event in agent2_response:
