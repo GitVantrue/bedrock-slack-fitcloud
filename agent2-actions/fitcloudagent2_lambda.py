@@ -52,8 +52,22 @@ def generate_excel_report(data):
     chart_y_title = ''
     chart_title = ''
 
+    # inputText에서 추출한 가상 데이터 구조 처리 (새로 추가)
+    if 'percentage' in first and 'rank' in first:
+        ws_title = "서비스별 요금 리포트"
+        headers = ['순위', '서비스명', '요금(USD)', '비율(%)']
+        for item in records:
+            rows.append([
+                item.get('rank', ''),
+                item.get('serviceName', ''),
+                item.get('usageFeeUSD', 0),
+                item.get('percentage', 0)
+            ])
+        chart_x_title = '서비스명'
+        chart_y_title = '요금(USD)'
+        chart_title = '서비스별 요금'
     # 월별 요금
-    if 'billingPeriod' in first:
+    elif 'billingPeriod' in first:
         ws_title = "월별 요금 리포트"
         headers = ['월', '요금(USD)']
         months = [item['billingPeriod'] for item in records]
@@ -109,16 +123,28 @@ def generate_excel_report(data):
         ws.append(row)
 
     # 차트 추가 (가능한 경우만) - app.py와 동일한 로직
-    if not chart and len(rows) > 0 and len(headers) == 2 and all(isinstance(r[1], (int, float)) for r in rows):
-        chart = BarChart()
-        chart.title = chart_title
-        chart.x_axis.title = chart_x_title
-        chart.y_axis.title = chart_y_title
-        data_ref = Reference(ws, min_col=2, min_row=1, max_row=len(rows)+1)
-        cats_ref = Reference(ws, min_col=1, min_row=2, max_row=len(rows)+1)
-        chart.add_data(data_ref, titles_from_data=True)
-        chart.set_categories(cats_ref)
-        ws.add_chart(chart, "E2")
+    if not chart and len(rows) > 0 and len(headers) >= 2:
+        # inputText에서 추출한 데이터의 경우 3번째 컬럼(요금)을 차트 데이터로 사용
+        if 'percentage' in first and 'rank' in first:
+            chart = BarChart()
+            chart.title = chart_title
+            chart.x_axis.title = chart_x_title
+            chart.y_axis.title = chart_y_title
+            data_ref = Reference(ws, min_col=3, min_row=1, max_row=len(rows)+1)  # 3번째 컬럼 (요금)
+            cats_ref = Reference(ws, min_col=2, min_row=2, max_row=len(rows)+1)  # 2번째 컬럼 (서비스명)
+            chart.add_data(data_ref, titles_from_data=True)
+            chart.set_categories(cats_ref)
+            ws.add_chart(chart, "F2")
+        elif len(headers) == 2 and all(isinstance(r[1], (int, float)) for r in rows):
+            chart = BarChart()
+            chart.title = chart_title
+            chart.x_axis.title = chart_x_title
+            chart.y_axis.title = chart_y_title
+            data_ref = Reference(ws, min_col=2, min_row=1, max_row=len(rows)+1)
+            cats_ref = Reference(ws, min_col=1, min_row=2, max_row=len(rows)+1)
+            chart.add_data(data_ref, titles_from_data=True)
+            chart.set_categories(cats_ref)
+            ws.add_chart(chart, "E2")
 
     # 파일 메모리 저장
     file_stream = io.BytesIO()
@@ -310,7 +336,74 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 except Exception as e:
                     logger.warning(f"[Agent2] raw_response 파싱 실패: {e}")
         
-        # 2. conversationHistory에서 보조 추출 (기존 방식)
+        # 2. inputText에서 Agent1 데이터 추출 (직접 호출된 경우)
+        if not agent1_result and 'inputText' in event:
+            input_text = event['inputText']
+            logger.info(f"[Agent2] inputText에서 Agent1 데이터 추출 시도 (길이: {len(input_text)})")
+            
+            # inputText에서 비용 데이터 패턴 찾기
+            cost_patterns = [
+                r'총 온디맨드 사용금액:\s*\$([0-9,]+\.?[0-9]*)',
+                r'총 사용량:\s*\$([0-9,]+\.?[0-9]*)',
+                r'총 요금:\s*\$([0-9,]+\.?[0-9]*)'
+            ]
+            
+            total_cost = None
+            for pattern in cost_patterns:
+                match = re.search(pattern, input_text)
+                if match:
+                    total_cost = match.group(1).replace(',', '')
+                    logger.info(f"[Agent2] inputText에서 총 비용 추출: ${total_cost}")
+                    break
+            
+            if total_cost:
+                # inputText에서 서비스별 비용 정보 추출
+                service_costs = []
+                service_pattern = r'(\d+)\.\s*([^:]+):\s*약\s*\$([0-9,]+)\s*\(([0-9.]+)%\)'
+                matches = re.findall(service_pattern, input_text)
+                
+                for rank, service_name, cost, percentage in matches:
+                    service_costs.append({
+                        'serviceName': service_name.strip(),
+                        'usageFeeUSD': float(cost.replace(',', '')),
+                        'percentage': float(percentage),
+                        'rank': int(rank)
+                    })
+                
+                # 기타 서비스 비용 추출
+                etc_pattern = r'기타 서비스:\s*약\s*\$([0-9,]+)\s*\(([0-9.]+)%\)'
+                etc_match = re.search(etc_pattern, input_text)
+                if etc_match:
+                    service_costs.append({
+                        'serviceName': '기타 서비스',
+                        'usageFeeUSD': float(etc_match.group(1).replace(',', '')),
+                        'percentage': float(etc_match.group(2)),
+                        'rank': len(service_costs) + 1
+                    })
+                
+                # 월 정보 추출
+                month_pattern = r'(\d{4})년\s*(\d{1,2})월'
+                month_match = re.search(month_pattern, input_text)
+                billing_period = None
+                if month_match:
+                    year = month_match.group(1)
+                    month = month_match.group(2).zfill(2)
+                    billing_period = f"{year}{month}"
+                
+                # 가상의 비용 데이터 구조 생성
+                agent1_result = []
+                for service in service_costs:
+                    agent1_result.append({
+                        'serviceName': service['serviceName'],
+                        'usageFeeUSD': service['usageFeeUSD'],
+                        'billingPeriod': billing_period or '202506',  # 기본값
+                        'date': billing_period or '202506',  # 기본값
+                        'percentage': service['percentage']
+                    })
+                
+                logger.info(f"[Agent2] inputText에서 비용 데이터 추출 성공 (서비스 수: {len(service_costs)})")
+        
+        # 3. conversationHistory에서 보조 추출 (기존 방식)
         if not agent1_result and 'conversationHistory' in event:
             logger.info(f"[Agent2] conversationHistory에서 Agent1 데이터 추출 시도")
             ch = event['conversationHistory']
