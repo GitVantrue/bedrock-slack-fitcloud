@@ -110,63 +110,54 @@ def lambda_handler(event, context):
             logger.info(f"[Supervisor] Agent1 추출된 텍스트 (처음 300자): {agent1_result_text[:300]}")
             logger.info(f"[Supervisor] Agent1 추출된 텍스트 길이: {len(agent1_result_text)}")
             
-            # 3. Agent2 호출 (동일한 sessionId + sessionAttributes에 Agent1 응답 저장)
-            agent2_input_text = f"보고서를 만들어주세요. 조회된 데이터:\n{agent1_result_text}"
-            logger.info(f"[Supervisor] Agent2 호출용 inputText: {agent2_input_text[:300]}")
-            logger.info(f"[Supervisor] Agent2 호출 시 sessionId: {session_id}")
-            
+            # 3. Agent2 Lambda 비동기 호출 (보고서 생성)
+            logger.info(f"[Supervisor] Agent2 Lambda 비동기 호출 시작")
             try:
-                agent2_response = client.invoke_agent(
-                    agentId=AGENT2_ID,
-                    agentAliasId=AGENT2_ALIAS,
-                    sessionId=session_id,  # 동일한 sessionId 사용
-                    inputText=agent2_input_text,
-                    sessionState={
-                        "sessionAttributes": {
-                            "agent1_response": agent1_result_text,
-                            "agent1_raw_response": raw_agent1_response,
-                            "supervisor_session": "true",
-                            "report_request": "true"
-                        }
-                    }
-                )
-                logger.info(f"[Supervisor] Agent2 호출 성공")
+                lambda_client = boto3.client('lambda')
+                agent2_lambda_name = "fitcloud_action_part2-wpfe6"
                 
-                agent2_result = ""
-                try:
-                    for event in agent2_response:
-                        if 'chunk' in event and 'bytes' in event['chunk']:
-                            agent2_result += event['chunk']['bytes'].decode('utf-8')
-                except Exception as e:
-                    logger.error(f"Agent2 EventStream 파싱 실패: {e}")
-                    agent2_result = f"Agent2 호출 실패: {str(e)}"
-                if not agent2_result:
-                    agent2_result = "[Supervisor] Agent2로부터 유효한 응답을 받지 못했습니다."
-                logger.info(f"[Supervisor] Agent2 최종 응답: {agent2_result[:300]}")
+                agent2_payload = {
+                    "inputText": f"보고서를 만들어주세요. 조회된 데이터:\n{agent1_result_text}",
+                    "sessionId": session_id,
+                    "sessionAttributes": {
+                        "agent1_response": agent1_result_text,
+                        "agent1_raw_response": raw_agent1_response,
+                        "supervisor_session": "true",
+                        "report_request": "true"
+                    },
+                    "parameters": event.get("parameters", {}),
+                    "requestBody": event.get("requestBody", {}),
+                    "async_mode": True  # 비동기 모드 플래그
+                }
+                
+                # Agent2 Lambda 비동기 호출 (응답 기다리지 않음)
+                lambda_client.invoke(
+                    FunctionName=agent2_lambda_name,
+                    InvocationType='Event',  # 비동기 호출
+                    Payload=json.dumps(agent2_payload)
+                )
+                logger.info(f"[Supervisor] Agent2 Lambda 비동기 호출 성공")
                 
             except Exception as agent2_e:
-                logger.error(f"[Supervisor] Agent2 호출 실패: {agent2_e}")
-                return {
-                    'response': {
-                        'body': {
-                            'content': [
-                                {
-                                    'type': 'text',
-                                    'text': f'❌ Agent2 호출 중 오류가 발생했습니다: {str(agent2_e)}'
-                                }
-                            ]
-                        }
-                    }
-                }
+                logger.error(f"[Supervisor] Agent2 Lambda 호출 실패: {agent2_e}")
+                # Agent2 호출 실패해도 Agent1 응답은 반환
             
-            # 최종 응답 반환
+            # Agent1 응답을 즉시 반환 (보고서 생성은 백그라운드에서 진행)
+            completion_message = (
+                f"{agent1_result_text}\n\n"
+                f"📊 **보고서 생성이 시작되었습니다!**\n"
+                f"✅ 데이터 조회가 완료되었습니다.\n"
+                f"🔄 엑셀 보고서를 생성하고 슬랙에 업로드 중입니다...\n"
+                f"⏱️ 완료되면 슬랙 채널에 파일이 업로드됩니다."
+            )
+            
             return {
                 'response': {
                     'body': {
                         'content': [
                             {
                                 'type': 'text',
-                                'text': agent2_result
+                                'text': completion_message
                             }
                         ]
                     }

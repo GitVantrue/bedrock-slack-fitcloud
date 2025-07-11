@@ -527,29 +527,74 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             logger.error(f"[Agent2] 엑셀 생성 실패 상세: {traceback.format_exc()}")
             raise
 
-        # 6. 결과 반환
-        completion_msg = (
-            f"📊 **{upload_result.get('report_title', '리포트')} 생성 완료!**\n"
-            f"✅ 엑셀 파일이 슬랙 채널에 업로드되었습니다.\n"
-            f"🔗 파일 링크: {upload_result.get('permalink', '링크 없음')}\n"
-            f"📁 파일 ID: {upload_result.get('file_id', 'N/A')}\n"
-            f"📋 데이터 소스: {'세션 속성' if 'sessionAttributes' in event and isinstance(event['sessionAttributes'], dict) and 'agent1_result' in event['sessionAttributes'] else 'Agent1 호출'}"
-        )
+        # 6. 결과 반환 (비동기 모드 확인)
+        async_mode = event.get('async_mode', False)
         
-        logger.info(f"[Agent2] 처리 완료")
-        
-        return {
-            'response': {
-                'body': {
-                    'content': [
-                        {
-                            'type': 'text',
-                            'text': completion_msg
-                        }
-                    ]
+        if async_mode:
+            # 비동기 모드: 슬랙에 직접 완료 메시지 전송
+            logger.info(f"[Agent2] 비동기 모드 - 슬랙에 직접 완료 메시지 전송")
+            
+            completion_msg = (
+                f"📊 **{upload_result.get('report_title', '리포트')} 생성 완료!**\n"
+                f"✅ 엑셀 파일이 슬랙 채널에 업로드되었습니다.\n"
+                f"🔗 파일 링크: {upload_result.get('permalink', '링크 없음')}\n"
+                f"📁 파일 ID: {upload_result.get('file_id', 'N/A')}"
+            )
+            
+            # 슬랙에 완료 메시지 전송
+            try:
+                slack_message_payload = {
+                    "channel": SLACK_CHANNEL,
+                    "text": completion_msg,
+                    "unfurl_links": True
+                }
+                
+                slack_response = requests.post(
+                    'https://slack.com/api/chat.postMessage',
+                    headers={'Authorization': f'Bearer {SLACK_BOT_TOKEN}'},
+                    json=slack_message_payload
+                )
+                
+                if slack_response.status_code == 200:
+                    logger.info(f"[Agent2] 슬랙 완료 메시지 전송 성공")
+                else:
+                    logger.error(f"[Agent2] 슬랙 완료 메시지 전송 실패: {slack_response.status_code}")
+                    
+            except Exception as e:
+                logger.error(f"[Agent2] 슬랙 완료 메시지 전송 중 오류: {e}")
+            
+            # 비동기 모드에서는 빈 응답 반환 (Bedrock Agent 응답이 아님)
+            return {
+                'statusCode': 200,
+                'body': json.dumps({
+                    'message': '보고서 생성 완료',
+                    'success': True
+                })
+            }
+        else:
+            # 동기 모드: 기존 Bedrock Agent 응답 형식
+            completion_msg = (
+                f"📊 **{upload_result.get('report_title', '리포트')} 생성 완료!**\n"
+                f"✅ 엑셀 파일이 슬랙 채널에 업로드되었습니다.\n"
+                f"🔗 파일 링크: {upload_result.get('permalink', '링크 없음')}\n"
+                f"📁 파일 ID: {upload_result.get('file_id', 'N/A')}\n"
+                f"📋 데이터 소스: {'세션 속성' if 'sessionAttributes' in event and isinstance(event['sessionAttributes'], dict) and 'agent1_result' in event['sessionAttributes'] else 'Agent1 호출'}"
+            )
+            
+            logger.info(f"[Agent2] 동기 모드 - Bedrock Agent 응답 반환")
+            
+            return {
+                'response': {
+                    'body': {
+                        'content': [
+                            {
+                                'type': 'text',
+                                'text': completion_msg
+                            }
+                        ]
+                    }
                 }
             }
-        }
 
     except Exception as e:
         import traceback
