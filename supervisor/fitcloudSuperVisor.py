@@ -110,43 +110,31 @@ def lambda_handler(event, context):
             logger.info(f"[Supervisor] Agent1 추출된 텍스트 (처음 300자): {agent1_result_text[:300]}")
             logger.info(f"[Supervisor] Agent1 추출된 텍스트 길이: {len(agent1_result_text)}")
             
-            # 3. Agent2 Lambda 동기 호출 (보고서 생성)
-            logger.info(f"[Supervisor] Agent2 Lambda 동기 호출 시작")
+            # 3. Agent2를 Bedrock Agent Runtime으로 호출 (Agent1 응답 포함)
+            logger.info(f"[Supervisor] Agent2({AGENT2_ID}) Bedrock Agent Runtime 호출 시작")
             try:
-                lambda_client = boto3.client('lambda')
-                agent2_lambda_name = "fitcloud_action_part2-wpfe6"
+                # Agent1 응답을 포함한 inputText 생성
+                agent2_input_text = f"보고서를 만들어주세요. 조회된 데이터:\n{agent1_result_text}"
                 
-                agent2_payload = {
-                    "inputText": f"보고서를 만들어주세요. 조회된 데이터:\n{agent1_result_text}",
-                    "sessionId": session_id,
-                    "sessionAttributes": {
-                        "agent1_response": agent1_result_text,
-                        "agent1_raw_response": raw_agent1_response,
-                        "supervisor_session": "true",
-                        "report_request": "true"
-                    },
-                    "parameters": event.get("parameters", {}),
-                    "requestBody": event.get("requestBody", {}),
-                    "async_mode": False  # 동기 모드로 변경
-                }
-                
-                # Agent2 Lambda 동기 호출 (응답 기다림)
-                agent2_response = lambda_client.invoke(
-                    FunctionName=agent2_lambda_name,
-                    InvocationType='RequestResponse',  # 동기 호출로 변경
-                    Payload=json.dumps(agent2_payload)
+                # Agent2 호출 (동일한 sessionId 사용)
+                agent2_response = client.invoke_agent(
+                    agentId=AGENT2_ID,
+                    agentAliasId=AGENT2_ALIAS,
+                    sessionId=session_id,  # 동일한 sessionId 사용
+                    inputText=agent2_input_text
                 )
                 
-                # Agent2 응답 파싱
-                agent2_payload_response = json.loads(agent2_response['Payload'].read().decode('utf-8'))
-                logger.info(f"[Supervisor] Agent2 Lambda 동기 호출 성공")
+                # Agent2 응답 chunk 이어붙이기
+                raw_agent2_response = ""
+                for event_chunk in agent2_response:
+                    if 'chunk' in event_chunk and 'bytes' in event_chunk['chunk']:
+                        raw_agent2_response += event_chunk['chunk']['bytes'].decode('utf-8')
+                
+                logger.info(f"[Supervisor] Agent2 응답 받음 (길이: {len(raw_agent2_response)})")
+                logger.info(f"[Supervisor] Agent2 응답 (처음 300자): {raw_agent2_response[:300]}")
                 
                 # Agent2 응답에서 메시지 추출
-                agent2_message = ""
-                if 'response' in agent2_payload_response and 'body' in agent2_payload_response['response']:
-                    content = agent2_payload_response['response']['body']['content']
-                    if content and len(content) > 0:
-                        agent2_message = content[0].get('text', '')
+                agent2_message = raw_agent2_response
                 
                 # 완전한 응답 생성 (Agent1 + Agent2 결과)
                 completion_message = (
